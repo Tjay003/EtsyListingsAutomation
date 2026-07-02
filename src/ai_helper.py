@@ -212,19 +212,47 @@ def write_etsy_listing(title, description, price="", client=None):
         print(f"Error generating listing content: {e}")
         return None
 
-def generate_image_prompt_details(description, client=None):
-    """Generate a concise, detailed physical description of the product for image prompt injection."""
+def generate_image_prompt_details(image_path_or_text, client=None):
+    """Generate visual details from either a local product image path (preferred) or text description."""
     if not client:
         client = get_genai_client()
         
+    if not image_path_or_text:
+        return ""
+        
+    # Check if the input is a valid file path to an image on disk
+    if isinstance(image_path_or_text, str) and os.path.exists(image_path_or_text) and image_path_or_text.lower().endswith(('.png', '.jpg', '.jpeg')):
+        print(f"Analyzing reference image for visual prompt details: {image_path_or_text}")
+        prompt = (
+            "Analyze this product image. Write a highly detailed description of the product's appearance "
+            "designed specifically for a text-to-image prompt (FLUX/Midjourney). Describe the exact shape, "
+            "the texture, the colors, materials, straps, details, and the overall styling. Be descriptive and detailed "
+            "(about 50-70 words). Do not include any introductory or concluding text, do not write 'Here is'."
+        )
+        try:
+            pil_img = Image.open(image_path_or_text)
+            response = generate_content_with_retry(
+                client=client,
+                model=GEMINI_MODEL,
+                contents=[prompt, pil_img]
+            )
+            visual_details = response.text.strip().replace('\n', ' ').strip()
+            if visual_details.startswith('"') and visual_details.endswith('"'):
+                visual_details = visual_details[1:-1]
+            print(f"Extracted visual details from reference image: {visual_details}")
+            return visual_details
+        except Exception as e:
+            print(f"Error generating visual details from image: {e}")
+            
+    # Fallback to text description analysis
+    print("Generating visual details from text description fallback...")
     prompt = (
         "Based on the following product details, write a concise description of its physical appearance "
         "ideal for a text-to-image prompt (like Midjourney/FLUX). Focus strictly on its shape, materials, "
         "color pattern, and design highlights. Keep it under 25 words, separated by commas. "
-        "Do not write introductory text, do not write 'Here is', do not use bullet points.\n\n"
-        f"Product Details:\n{description}"
+        "Do not write introductory text, do not use bullet points.\n\n"
+        f"Product Details:\n{image_path_or_text}"
     )
-    
     try:
         response = generate_content_with_retry(
             client=client,
@@ -232,11 +260,10 @@ def generate_image_prompt_details(description, client=None):
             contents=prompt
         )
         visual_details = response.text.strip().replace('\n', ' ').strip()
-        # Clean wrapping quotes
         if visual_details.startswith('"') and visual_details.endswith('"'):
             visual_details = visual_details[1:-1]
-        print(f"Extracted visual details for image generation: {visual_details}")
+        print(f"Extracted visual details from text: {visual_details}")
         return visual_details
     except Exception as e:
-        print(f"Error generating visual details: {e}")
+        print(f"Error generating visual details from text: {e}")
         return ""

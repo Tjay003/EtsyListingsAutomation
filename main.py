@@ -112,8 +112,9 @@ def main():
     # --- PHASE 3: IMAGE GENERATION ---
     print(f"\n=== Phase 3: Rolling Theme & Generating Images ===")
     
-    # Distill the parsed description into a brief visual physical description
-    visual_details = generate_image_prompt_details(description, client)
+    # Use the first downloaded product image as a visual reference if available, otherwise fall back to description
+    reference_input = image_paths[0] if (image_paths and os.path.exists(image_paths[0])) else description
+    visual_details = generate_image_prompt_details(reference_input, client)
     if visual_details:
         combined_trigger = f"{args.product_trigger}, {visual_details}"
     else:
