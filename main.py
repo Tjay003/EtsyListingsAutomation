@@ -6,7 +6,8 @@ from src.scraper import scrape_aliexpress, sanitize_filename, parse_aliexpress_h
 from src.ai_helper import (
     get_genai_client,
     generate_description_from_images,
-    write_etsy_listing
+    write_etsy_listing,
+    generate_image_prompt_details
 )
 from src.image_gen import (
     load_themes,
@@ -111,6 +112,13 @@ def main():
     # --- PHASE 3: IMAGE GENERATION ---
     print(f"\n=== Phase 3: Rolling Theme & Generating Images ===")
     
+    # Distill the parsed description into a brief visual physical description
+    visual_details = generate_image_prompt_details(description, client)
+    if visual_details:
+        combined_trigger = f"{args.product_trigger}, {visual_details}"
+    else:
+        combined_trigger = args.product_trigger
+    
     # Create the output folder for this listing
     product_slug = sanitize_filename(etsy_listing['title'] or "etsy_listing")
     product_output_dir = os.path.join(args.output_dir, product_slug)
@@ -122,7 +130,7 @@ def main():
         # User supplied an inspiration image - extract style and build prompts dynamically
         try:
             inspo_style = analyze_inspo_style(args.inspo_image, client)
-            prompts_to_run = generate_prompts_from_inspo(inspo_style, args.product_trigger)
+            prompts_to_run = generate_prompts_from_inspo(inspo_style, combined_trigger)
         except Exception as e:
             print(f"Failed to use inspiration image: {e}. Falling back to default theme.")
             args.inspo_image = None # Reset to trigger normal themes loader
@@ -134,7 +142,7 @@ def main():
             print("ERROR: themes.yaml not found or empty.")
             sys.exit(1)
         try:
-            prompts_to_run = roll_theme_prompts(args.theme, themes_config, args.product_trigger)
+            prompts_to_run = roll_theme_prompts(args.theme, themes_config, combined_trigger)
         except ValueError as e:
             print(f"ERROR: {e}")
             sys.exit(1)

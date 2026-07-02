@@ -211,3 +211,32 @@ def write_etsy_listing(title, description, price="", client=None):
     except Exception as e:
         print(f"Error generating listing content: {e}")
         return None
+
+def generate_image_prompt_details(description, client=None):
+    """Generate a concise, detailed physical description of the product for image prompt injection."""
+    if not client:
+        client = get_genai_client()
+        
+    prompt = (
+        "Based on the following product details, write a concise description of its physical appearance "
+        "ideal for a text-to-image prompt (like Midjourney/FLUX). Focus strictly on its shape, materials, "
+        "color pattern, and design highlights. Keep it under 25 words, separated by commas. "
+        "Do not write introductory text, do not write 'Here is', do not use bullet points.\n\n"
+        f"Product Details:\n{description}"
+    )
+    
+    try:
+        response = generate_content_with_retry(
+            client=client,
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+        visual_details = response.text.strip().replace('\n', ' ').strip()
+        # Clean wrapping quotes
+        if visual_details.startswith('"') and visual_details.endswith('"'):
+            visual_details = visual_details[1:-1]
+        print(f"Extracted visual details for image generation: {visual_details}")
+        return visual_details
+    except Exception as e:
+        print(f"Error generating visual details: {e}")
+        return ""
