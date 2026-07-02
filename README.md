@@ -1,10 +1,34 @@
-# 🛠️ Etsy Listings Automation Pipeline
+# 🛠️ Etsy Listings Automation Pipeline & Chrome Extension
 
-An automated pair-programming workspace utility that scrapes product information from AliExpress page source files, generates SEO-optimized Etsy listings using Google Gemini with structured guardrails, and renders themed lifestyle/product images completely for free using the state-of-the-art **FLUX.1-schnell** image model.
+A dual-mode workspace utility that scrapes product details directly from AliExpress and generates SEO-optimized Etsy listings using Google Gemini.
+
+1.  **🚀 Chrome Extension (Recommended)**: Scraping runs directly inside your browser on the active tab. No CAPTCHAs, no robot-detection blocks, and no downloading local HTML files. Outputs optimized copy directly in your browser with one-click copy buttons.
+2.  **🐍 Python CLI Script**: Local pipeline that parses downloaded AliExpress HTML pages, generates Etsy copies, and runs free themed lifestyle image generation using **FLUX.1-schnell** via Pollinations.ai.
 
 ---
 
-## 🏗️ Architecture & Pipeline Phases
+## ⚡ Option 1: Chrome Extension (Recommended)
+
+The Chrome Extension (Manifest V3) lives in the `extension/` folder. It executes scraping directly inside your browser DOM and generates the copy via Gemini.
+
+### ⚙️ How to Install the Extension
+1.  Open Google Chrome and navigate to **`chrome://extensions/`** in your URL bar.
+2.  In the top-right corner, toggle **Developer mode** to **ON**.
+3.  In the top-left, click the **Load unpacked** button.
+4.  Navigate to your project directory and select the **`extension`** folder.
+5.  Pin the **AliExpress to Etsy Copywriter** extension to your Chrome toolbar.
+
+### 🚀 How to Use It
+1.  Navigate to any AliExpress product page (e.g., a bag listing).
+2.  Click the extension icon in your Chrome toolbar.
+3.  Select the **Settings** tab inside the popup, paste your **Google Gemini API Key** (and optionally adjust your shop policies), and click **Save Settings**.
+4.  Switch back to the **Generator** tab and click **Scrape & Generate Copy**.
+5.  In under 10 seconds, your optimized Title, Price, Description (with policies appended), and 13 Tags will appear!
+6.  Click the **Copy** button next to any field to instantly paste it into your Etsy shop listing.
+
+---
+
+## 🐍 Option 2: Python CLI Script (With Free Image Generation)
 
 This automation pipeline runs locally inside a Python virtual environment and is orchestrated by [main.py](file:///c:/Users/Tyrone%20James%20Bacolod/OneDrive/Desktop/All%20Apps/Bacolod%20FIles/PROJECTS/EtsyListingsAutomation/main.py). It operates in 4 distinct phases:
 
@@ -50,8 +74,6 @@ Consolidates the listing data and generated images, exporting them to:
 ---
 
 ## ⚙️ Setup & Configuration
-
-### Environment Variables (`.env`)
 Create a `.env` file in the root directory:
 ```env
 # Your Google Gemini API Key from Google AI Studio
@@ -64,14 +86,11 @@ USE_FREE_GENERATOR=True
 GEMINI_MODEL=gemini-flash-latest
 ```
 
----
-
-## 🚀 How to Run the Automation
-
+### 🚀 How to Run the Script
 1.  **Save the AliExpress Product Page**:
     Open the product on your browser, press `Ctrl + S`, select **Webpage, Complete**, and save it (e.g. as `bag.html`).
 2.  **Move Files to Workspace**:
-    Copy `bag.html` and the corresponding `bag_files/` asset folder into the project root directory. *(Having the `bag_files` folder allows the script to parse specifications from the iframe).*
+    Copy `bag.html` and the corresponding `bag_files/` asset folder into the project root directory.
 3.  **Run the script in PowerShell**:
     ```powershell
     .\.venv\Scripts\python main.py --html-file "bag.html" --theme "bauhaus_beige" --product-trigger "nanobananapro2 yarn shoulder bag"

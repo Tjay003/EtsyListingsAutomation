@@ -1,0 +1,305 @@
+document.addEventListener("DOMContentLoaded", () => {
+  // Tabs navigation elements
+  const tabBtnGen = document.getElementById("tab-btn-generator");
+  const tabBtnSettings = document.getElementById("tab-btn-settings");
+  const panelGen = document.getElementById("panel-generator");
+  const panelSettings = document.getElementById("panel-settings");
+
+  // Generator elements
+  const btnScrape = document.getElementById("btn-scrape");
+  const statusContainer = document.getElementById("status-container");
+  const statusText = document.getElementById("status-text");
+  const errorContainer = document.getElementById("error-container");
+  const outputContainer = document.getElementById("output-container");
+  const outputTitle = document.getElementById("output-title");
+  const outputPrice = document.getElementById("output-price");
+  const outputTags = document.getElementById("output-tags");
+  const outputDesc = document.getElementById("output-desc");
+  const titleCounter = document.getElementById("title-counter");
+
+  // Settings elements
+  const inputApiKey = document.getElementById("input-api-key");
+  const selectModel = document.getElementById("select-model");
+  const inputCancelPolicy = document.getElementById("input-cancellation-policy");
+  const inputReturnPolicy = document.getElementById("input-return-policy");
+  const btnSaveSettings = document.getElementById("btn-save-settings");
+  const settingsSaveStatus = document.getElementById("settings-save-status");
+
+  // Copy buttons
+  const copyBtns = {
+    title: document.getElementById("copy-title"),
+    price: document.getElementById("copy-price"),
+    tags: document.getElementById("copy-tags"),
+    desc: document.getElementById("copy-desc")
+  };
+
+  // Default shop policies
+  const DEFAULT_CANCEL = "Cancellation is allowed within 5 hours after placing the order.";
+  const DEFAULT_RETURN = "Returns and refunds are accepted for items that arrive damaged or incorrect only.";
+
+  // Load Settings on start
+  chrome.storage.local.get(["apiKey", "model", "cancelPolicy", "returnPolicy"], (result) => {
+    inputApiKey.value = result.apiKey || "";
+    selectModel.value = result.model || "gemini-flash-latest";
+    inputCancelPolicy.value = result.cancelPolicy || DEFAULT_CANCEL;
+    inputReturnPolicy.value = result.returnPolicy || DEFAULT_RETURN;
+  });
+
+  // Save Settings
+  btnSaveSettings.addEventListener("click", () => {
+    const apiKey = inputApiKey.value.trim();
+    const model = selectModel.value;
+    const cancelPolicy = inputCancelPolicy.value.trim();
+    const returnPolicy = inputReturnPolicy.value.trim();
+
+    chrome.storage.local.set({ apiKey, model, cancelPolicy, returnPolicy }, () => {
+      settingsSaveStatus.classList.remove("hidden");
+      setTimeout(() => settingsSaveStatus.classList.add("hidden"), 2000);
+    });
+  });
+
+  // Switch tabs
+  tabBtnGen.addEventListener("click", () => {
+    tabBtnGen.classList.add("active");
+    tabBtnSettings.classList.remove("active");
+    panelGen.classList.add("active");
+    panelSettings.classList.remove("active");
+  });
+
+  tabBtnSettings.addEventListener("click", () => {
+    tabBtnSettings.classList.add("active");
+    tabBtnGen.classList.remove("active");
+    panelSettings.classList.add("active");
+    panelGen.classList.remove("active");
+  });
+
+  // Live Title character counter
+  outputTitle.addEventListener("input", () => {
+    const len = outputTitle.value.length;
+    titleCounter.textContent = `${len}/140`;
+    if (len > 140) {
+      titleCounter.classList.add("warning");
+    } else {
+      titleCounter.classList.remove("warning");
+    }
+  });
+
+  // Scrape and Generate Listing
+  btnScrape.addEventListener("click", async () => {
+    hideMessage();
+    outputContainer.classList.add("hidden");
+
+    // 1. Fetch settings from storage
+    const settings = await new Promise(resolve => {
+      chrome.storage.local.get(["apiKey", "model", "cancelPolicy", "returnPolicy"], resolve);
+    });
+
+    if (!settings.apiKey) {
+      showError("Please set your Google Gemini API Key in the Settings tab first.");
+      return;
+    }
+
+    // 2. Query active browser tab
+    let activeTab;
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tabs || tabs.length === 0) {
+        showError("Could not detect active browser tab.");
+        return;
+      }
+      activeTab = tabs[0];
+    } catch (e) {
+      showError("Failed to query browser tabs.");
+      return;
+    }
+
+    // Check if on AliExpress
+    if (!activeTab.url || !(activeTab.url.includes("aliexpress.com") || activeTab.url.includes("aliexpress.us"))) {
+      showError("Please navigate to an AliExpress product page and try again.");
+      return;
+    }
+
+    // 3. Request scraping from content script
+    showStatus("Scraping product page DOM...");
+    
+    // Inject content script if not already loaded (failsafe)
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: activeTab.id },
+        files: ["content.js"]
+      });
+    } catch (e) {
+      // Script might already be injected by manifest, ignore execute errors
+    }
+
+    chrome.tabs.sendMessage(activeTab.id, { action: "scrapeProduct" }, async (response) => {
+      if (!response) {
+        showError("Failed to communicate with the page. Try reloading the AliExpress tab and opening this popup again.");
+        return;
+      }
+      if (!response.success) {
+        showError(`Scraping error: ${response.error}`);
+        return;
+      }
+
+      const scrapedData = response.data;
+      showStatus("Generating Etsy copywriting via Gemini...");
+
+      try {
+        const listing = await generateCopywriting(
+          settings.apiKey,
+          settings.model || "gemini-flash-latest",
+          scrapedData,
+          settings.cancelPolicy || DEFAULT_CANCEL,
+          settings.returnPolicy || DEFAULT_RETURN
+        );
+
+        // Populate fields
+        outputTitle.value = listing.title;
+        titleCounter.textContent = `${listing.title.length}/140`;
+        if (listing.title.length > 140) titleCounter.classList.add("warning");
+        else titleCounter.classList.remove("warning");
+
+        outputPrice.value = listing.suggested_price || scrapedData.price || "";
+        outputTags.value = listing.tags.join(", ");
+        outputDesc.value = listing.description;
+
+        hideMessage();
+        outputContainer.classList.remove("hidden");
+      } catch (error) {
+        showError(`Generation failed: ${error.message}`);
+      }
+    });
+  });
+
+  // Call Gemini API with retries and structured output
+  async function generateCopywriting(apiKey, model, scrapedData, cancelPolicy, returnPolicy) {
+    const prompt = `Create a structured Etsy product listing for this AliExpress item.
+Original Title: ${scrapedData.title}
+Scraped Specifications:
+${scrapedData.specs}
+Scraped Description:
+${scrapedData.descriptionFallback}
+Estimated Price: ${scrapedData.price}
+
+Guidelines:
+1. Write an SEO-friendly, catchy Title under 140 characters. Focus on keywords buyers search for.
+2. Write a detailed, structured Description highlighting specifications, materials, and benefits.
+3. Provide exactly 13 relevant search Tags (keywords or phrases). Ensure each tag is strictly under 20 characters (including spaces).
+4. Suggest a retail price in USD.`;
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        title: { type: "STRING", description: "Catchy search-optimized title under 140 characters" },
+        description: { type: "STRING", description: "Detailed product description focusing on specs and design details" },
+        tags: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "Exactly 13 tags under 20 characters each"
+        },
+        suggested_price: { type: "STRING", description: "Etsy retail price in USD, e.g., '$24.99'" }
+      },
+      required: ["title", "description", "tags", "suggested_price"]
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const payload = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: schema
+      }
+    };
+
+    const maxRetries = 3;
+    let delay = 2000;
+    let lastError;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          const resJson = await response.json();
+          let listing = JSON.parse(resJson.candidates[0].content.parts[0].text);
+
+          // Tag check & local guardrail
+          let cleanedTags = [];
+          listing.tags.forEach(tag => {
+            let t = tag.trim().toLowerCase().replace(/['"]/g, "");
+            if (t.length > 20) {
+              t = t.slice(0, 20).trim();
+            }
+            if (t && !cleanedTags.includes(t)) {
+              cleanedTags.push(t);
+            }
+          });
+          listing.tags = cleanedTags.slice(0, 13);
+
+          // Append shop policies
+          const policyFooter = `\n\n---\nCancellation Policy: ${cancelPolicy}\nReturns & Refunds Policy: ${returnPolicy}`;
+          listing.description = listing.description.trim() + policyFooter;
+
+          return listing;
+        }
+
+        const errText = await response.text();
+        if (response.status === 429 || response.status === 503) {
+          console.warn(`Google API busy (${response.status}). Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+        } else {
+          throw new Error(`Google API Error: ${response.status} - ${errText}`);
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxRetries - 1) {
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  // Helper displays
+  function showStatus(text) {
+    statusText.textContent = text;
+    statusContainer.classList.remove("hidden");
+    errorContainer.classList.add("hidden");
+  }
+
+  function hideMessage() {
+    statusContainer.classList.add("hidden");
+    errorContainer.classList.add("hidden");
+  }
+
+  function showError(msg) {
+    errorContainer.textContent = msg;
+    errorContainer.classList.remove("hidden");
+    statusContainer.classList.add("hidden");
+  }
+
+  // Setup copy events
+  copyBtns.title.addEventListener("click", () => copyToClipboard(outputTitle.value, copyBtns.title));
+  copyBtns.price.addEventListener("click", () => copyToClipboard(outputPrice.value, copyBtns.price));
+  copyBtns.tags.addEventListener("click", () => copyToClipboard(outputTags.value, copyBtns.tags));
+  copyBtns.desc.addEventListener("click", () => copyToClipboard(outputDesc.value, copyBtns.desc));
+
+  function copyToClipboard(text, button) {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      button.textContent = "Copied!";
+      button.classList.add("copied");
+      setTimeout(() => {
+        button.textContent = "Copy";
+        button.classList.remove("copied");
+      }, 2000);
+    });
+  }
+});

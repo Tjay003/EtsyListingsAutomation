@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "AliExpress to Etsy Copywriter",
+  "version": "1.0.0",
+  "description": "Scrapes AliExpress product listings and generates SEO-optimized Etsy listing titles, descriptions, and tags using Google Gemini.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ]
+}
