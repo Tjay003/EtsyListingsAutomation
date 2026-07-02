@@ -202,14 +202,16 @@ document.addEventListener("DOMContentLoaded", () => {
           hideMessage();
           outputContainer.classList.remove("hidden");
         } catch (error) {
-          showError(`Generation failed: ${error.message}`);
+          const errMsg = (error && error.message) ? error.message : String(error || "Unknown error");
+          showError(`Generation failed: ${errMsg}`);
         } finally {
           btnScrape.disabled = false;
           btnScrape.textContent = "Scrape & Generate Copy";
         }
       });
     } catch (err) {
-      showError(`An unexpected error occurred: ${err.message}`);
+      const errMsg = (err && err.message) ? err.message : String(err || "Unknown error");
+      showError(`An unexpected error occurred: ${errMsg}`);
       btnScrape.disabled = false;
       btnScrape.textContent = "Scrape & Generate Copy";
     }
@@ -264,7 +266,7 @@ Guidelines:
 
     const maxRetries = 3;
     let delay = 2000;
-    let lastError;
+    let lastError = new Error("Unknown copywriting generation error");
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -315,11 +317,14 @@ Guidelines:
           throw new Error(`Google API Error: ${response.status} - ${errText}`);
         }
       } catch (error) {
-        lastError = error;
-        // If it's a structural or bad request error (not a rate limit), throw immediately
-        const isRateLimit = error.message.includes("429") || error.message.includes("503") || error.message.toLowerCase().includes("busy") || error.message.toLowerCase().includes("quota");
-        if (error.message.includes("Google API Error") && !isRateLimit) {
-          throw error;
+        lastError = error || new Error("Unknown request error occurred");
+        
+        // Safeguard against undefined error objects or properties
+        const errorMsg = (lastError && lastError.message) ? lastError.message : String(lastError || "");
+        const isRateLimit = errorMsg && (errorMsg.includes("429") || errorMsg.includes("503") || errorMsg.toLowerCase().includes("busy") || errorMsg.toLowerCase().includes("quota"));
+        
+        if (errorMsg && errorMsg.includes("Google API Error") && !isRateLimit) {
+          throw lastError;
         }
         if (attempt < maxRetries - 1) {
           const waitSec = Math.round(delay / 1000);
