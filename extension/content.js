@@ -50,26 +50,44 @@ function scrapePage() {
 
   // 3. Scrape High-Resolution Images
   const imageSet = new Set();
-  const allImages = Array.from(document.querySelectorAll("img"));
   
-  allImages.forEach(img => {
-    const src = img.src || img.getAttribute("data-src") || img.getAttribute("lazy-src") || img.getAttribute("data-lazy-src");
-    if (src && (src.includes("ae01.alicdn.com/kf") || src.includes("alicdn.com/kf"))) {
-      // Reconstruct original high-resolution image URL by stripping thumbnail suffixes (like _Q90.jpg, _50x50.jpg, etc.)
-      let cleanUrl = src.replace(/_\d+x\d+.*$/, "")
-                         .replace(/_Q\d+.*$/, "")
-                         .replace(/_50x50.*$/, "")
-                         .replace(/_120x120.*$/, "")
-                         .replace(/_220x220.*$/, "")
-                         .replace(/_350x350.*$/, "")
-                         .replace(/_640x640.*$/, "")
-                         .replace(/_\.webp$/, "")
-                         .trim();
-      if (cleanUrl.startsWith("//")) {
-        cleanUrl = "https:" + cleanUrl;
-      }
-      imageSet.add(cleanUrl);
-    }
+  // Specific containers for product gallery, variations, and descriptions
+  const targetSelectors = [
+    ".gallery--image--3YV0E",
+    ".image-view-magnifier-wrap",
+    ".slider--box--3yK9u",
+    ".sku-property-image",
+    ".sku-property-item",
+    "#product-description",
+    ".product-description",
+    "#desc-lazyload-container",
+    ".detail-desc-decorate-richtext"
+  ];
+  
+  targetSelectors.forEach(selector => {
+    const containers = document.querySelectorAll(selector);
+    containers.forEach(container => {
+      const imgs = container.tagName === "IMG" ? [container] : Array.from(container.querySelectorAll("img"));
+      imgs.forEach(img => {
+        const src = img.src || img.getAttribute("data-src") || img.getAttribute("lazy-src") || img.getAttribute("data-lazy-src");
+        if (src && (src.includes("ae01.alicdn.com/kf") || src.includes("alicdn.com/kf"))) {
+          // Reconstruct original high-resolution image URL by stripping thumbnail suffixes (like _Q90.jpg, _50x50.jpg, etc.)
+          let cleanUrl = src.replace(/_\d+x\d+.*$/, "")
+                             .replace(/_Q\d+.*$/, "")
+                             .replace(/_50x50.*$/, "")
+                             .replace(/_120x120.*$/, "")
+                             .replace(/_220x220.*$/, "")
+                             .replace(/_350x350.*$/, "")
+                             .replace(/_640x640.*$/, "")
+                             .replace(/_\.webp$/, "")
+                             .trim();
+          if (cleanUrl.startsWith("//")) {
+            cleanUrl = "https:" + cleanUrl;
+          }
+          imageSet.add(cleanUrl);
+        }
+      });
+    });
   });
 
   // 4. Scrape Specifications & Details

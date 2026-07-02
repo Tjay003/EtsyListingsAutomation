@@ -143,6 +143,21 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const scrapedData = response.data;
+      
+      // Process images to send them multimodally
+      showStatus("Processing product images for visual scanning...");
+      const imageParts = [];
+      const imagesToProcess = scrapedData.images.slice(0, 3); // Grab top 3 product images
+      
+      for (const imgUrl of imagesToProcess) {
+        try {
+          const part = await urlToGenerativePart(imgUrl);
+          if (part) imageParts.push(part);
+        } catch (e) {
+          console.error("Failed to load image part:", imgUrl, e);
+        }
+      }
+      
       showStatus("Generating Etsy copywriting via Gemini...");
 
       try {
@@ -150,6 +165,7 @@ document.addEventListener("DOMContentLoaded", () => {
           settings.apiKey,
           settings.model || "gemini-flash-latest",
           scrapedData,
+          imageParts,
           settings.cancelPolicy || DEFAULT_CANCEL,
           settings.returnPolicy || DEFAULT_RETURN
         );
@@ -173,7 +189,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Call Gemini API with retries and structured output
-  async function generateCopywriting(apiKey, model, scrapedData, cancelPolicy, returnPolicy) {
+  async function generateCopywriting(apiKey, model, scrapedData, imageParts, cancelPolicy, returnPolicy) {
     const prompt = `Create a structured Etsy product listing for this AliExpress item.
 Original Title: ${scrapedData.title}
 Scraped Specifications:
@@ -184,7 +200,7 @@ Estimated Price: ${scrapedData.price}
 
 Guidelines:
 1. Write an SEO-friendly, catchy Title under 140 characters. Focus on keywords buyers search for.
-2. Write a detailed, structured Description highlighting specifications, materials, and benefits.
+2. Write a detailed, structured Description highlighting specifications, materials, and benefits. Examine the provided product photos to describe colors, shapes, textures, straps, and hardware accurately.
 3. Provide exactly 13 relevant search Tags (keywords or phrases). Ensure each tag is strictly under 20 characters (including spaces).
 4. Suggest a retail price in USD.`;
 
@@ -204,8 +220,15 @@ Guidelines:
     };
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    
+    // Combine the text prompt part with the base64 visual image parts
+    const contentParts = [{ text: prompt }];
+    if (imageParts && imageParts.length > 0) {
+      imageParts.forEach(part => contentParts.push(part));
+    }
+
     const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: contentParts }],
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: schema
@@ -301,5 +324,31 @@ Guidelines:
         button.classList.remove("copied");
       }, 2000);
     });
+  }
+
+  // Convert image URL to base64 inlineData part for Gemini API
+  async function urlToGenerativePart(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64Data = reader.result.split(',')[1];
+          resolve({
+            inlineData: {
+              mimeType: blob.type || "image/jpeg",
+              data: base64Data
+            }
+          });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error("Error converting image for Gemini API:", error);
+      return null;
+    }
   }
 });
