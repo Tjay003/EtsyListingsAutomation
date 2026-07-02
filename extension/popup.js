@@ -185,7 +185,8 @@ document.addEventListener("DOMContentLoaded", () => {
             scrapedData,
             imageParts,
             settings.cancelPolicy || DEFAULT_CANCEL,
-            settings.returnPolicy || DEFAULT_RETURN
+            settings.returnPolicy || DEFAULT_RETURN,
+            (statusMsg) => showStatus(statusMsg)
           );
 
           // Populate fields
@@ -215,7 +216,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Call Gemini API with retries and structured output
-  async function generateCopywriting(apiKey, model, scrapedData, imageParts, cancelPolicy, returnPolicy) {
+  async function generateCopywriting(apiKey, model, scrapedData, imageParts, cancelPolicy, returnPolicy, onStatusUpdate) {
     const prompt = `Create a structured Etsy product listing for this AliExpress item.
 Original Title: ${scrapedData.title}
 Scraped Specifications:
@@ -267,6 +268,10 @@ Guidelines:
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
+        if (onStatusUpdate) {
+          onStatusUpdate(`Sending request to Google Gemini API (Attempt ${attempt + 1}/${maxRetries})...`);
+        }
+        
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -299,15 +304,28 @@ Guidelines:
 
         const errText = await response.text();
         if (response.status === 429 || response.status === 503) {
-          console.warn(`Google API busy (${response.status}). Retrying in ${delay}ms...`);
+          const waitSec = Math.round(delay / 1000);
+          if (onStatusUpdate) {
+            onStatusUpdate(`Google API busy (${response.status}). Retrying in ${waitSec}s...`);
+          }
           await new Promise(r => setTimeout(r, delay));
           delay *= 2;
         } else {
+          // Fail fast on non-rate-limit errors
           throw new Error(`Google API Error: ${response.status} - ${errText}`);
         }
       } catch (error) {
         lastError = error;
+        // If it's a structural or bad request error (not a rate limit), throw immediately
+        const isRateLimit = error.message.includes("429") || error.message.includes("503") || error.message.toLowerCase().includes("busy") || error.message.toLowerCase().includes("quota");
+        if (error.message.includes("Google API Error") && !isRateLimit) {
+          throw error;
+        }
         if (attempt < maxRetries - 1) {
+          const waitSec = Math.round(delay / 1000);
+          if (onStatusUpdate) {
+            onStatusUpdate(`Network error. Retrying in ${waitSec}s...`);
+          }
           await new Promise(r => setTimeout(r, delay));
           delay *= 2;
         }
