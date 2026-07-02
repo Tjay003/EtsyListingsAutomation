@@ -88,104 +88,130 @@ document.addEventListener("DOMContentLoaded", () => {
   btnScrape.addEventListener("click", async () => {
     hideMessage();
     outputContainer.classList.add("hidden");
-
-    // 1. Fetch settings from storage
-    const settings = await new Promise(resolve => {
-      chrome.storage.local.get(["apiKey", "model", "cancelPolicy", "returnPolicy"], resolve);
-    });
-
-    if (!settings.apiKey) {
-      showError("Please set your Google Gemini API Key in the Settings tab first.");
-      return;
-    }
-
-    // 2. Query active browser tab
-    let activeTab;
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tabs || tabs.length === 0) {
-        showError("Could not detect active browser tab.");
-        return;
-      }
-      activeTab = tabs[0];
-    } catch (e) {
-      showError("Failed to query browser tabs.");
-      return;
-    }
-
-    // Check if on AliExpress
-    if (!activeTab.url || !(activeTab.url.includes("aliexpress.com") || activeTab.url.includes("aliexpress.us"))) {
-      showError("Please navigate to an AliExpress product page and try again.");
-      return;
-    }
-
-    // 3. Request scraping from content script
-    showStatus("Scraping product page DOM...");
     
-    // Inject content script if not already loaded (failsafe)
+    // Set UI to loading state instantly
+    btnScrape.disabled = true;
+    btnScrape.textContent = "Processing...";
+    showStatus("Initializing scraping request...");
+
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: activeTab.id },
-        files: ["content.js"]
+      // 1. Fetch settings from storage
+      const settings = await new Promise(resolve => {
+        chrome.storage.local.get(["apiKey", "model", "cancelPolicy", "returnPolicy"], resolve);
       });
-    } catch (e) {
-      // Script might already be injected by manifest, ignore execute errors
-    }
 
-    chrome.tabs.sendMessage(activeTab.id, { action: "scrapeProduct" }, async (response) => {
-      if (!response) {
-        showError("Failed to communicate with the page. Try reloading the AliExpress tab and opening this popup again.");
-        return;
-      }
-      if (!response.success) {
-        showError(`Scraping error: ${response.error}`);
+      if (!settings.apiKey) {
+        showError("Please set your Google Gemini API Key in the Settings tab first.");
+        btnScrape.disabled = false;
+        btnScrape.textContent = "Scrape & Generate Copy";
         return;
       }
 
-      const scrapedData = response.data;
-      
-      // Process images to send them multimodally
-      showStatus("Processing product images for visual scanning...");
-      const imageParts = [];
-      const imagesToProcess = scrapedData.images.slice(0, 3); // Grab top 3 product images
-      
-      for (const imgUrl of imagesToProcess) {
-        try {
-          const part = await urlToGenerativePart(imgUrl);
-          if (part) imageParts.push(part);
-        } catch (e) {
-          console.error("Failed to load image part:", imgUrl, e);
-        }
-      }
-      
-      showStatus("Generating Etsy copywriting via Gemini...");
-
+      // 2. Query active browser tab
+      let activeTab;
       try {
-        const listing = await generateCopywriting(
-          settings.apiKey,
-          settings.model || "gemini-flash-latest",
-          scrapedData,
-          imageParts,
-          settings.cancelPolicy || DEFAULT_CANCEL,
-          settings.returnPolicy || DEFAULT_RETURN
-        );
-
-        // Populate fields
-        outputTitle.value = listing.title;
-        titleCounter.textContent = `${listing.title.length}/140`;
-        if (listing.title.length > 140) titleCounter.classList.add("warning");
-        else titleCounter.classList.remove("warning");
-
-        outputPrice.value = listing.suggested_price || scrapedData.price || "";
-        outputTags.value = listing.tags.join(", ");
-        outputDesc.value = listing.description;
-
-        hideMessage();
-        outputContainer.classList.remove("hidden");
-      } catch (error) {
-        showError(`Generation failed: ${error.message}`);
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tabs || tabs.length === 0) {
+          showError("Could not detect active browser tab.");
+          btnScrape.disabled = false;
+          btnScrape.textContent = "Scrape & Generate Copy";
+          return;
+        }
+        activeTab = tabs[0];
+      } catch (e) {
+        showError("Failed to query browser tabs.");
+        btnScrape.disabled = false;
+        btnScrape.textContent = "Scrape & Generate Copy";
+        return;
       }
-    });
+
+      // Check if on AliExpress
+      if (!activeTab.url || !(activeTab.url.includes("aliexpress.com") || activeTab.url.includes("aliexpress.us"))) {
+        showError("Please navigate to an AliExpress product page and try again.");
+        btnScrape.disabled = false;
+        btnScrape.textContent = "Scrape & Generate Copy";
+        return;
+      }
+
+      // 3. Request scraping from content script
+      showStatus("Connecting to page and scraping DOM details...");
+      
+      // Inject content script if not already loaded (failsafe)
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          files: ["content.js"]
+        });
+      } catch (e) {
+        // Script might already be injected by manifest, ignore execute errors
+      }
+
+      chrome.tabs.sendMessage(activeTab.id, { action: "scrapeProduct" }, async (response) => {
+        if (!response) {
+          showError("Failed to communicate with the page. Try reloading the AliExpress tab and opening this popup again.");
+          btnScrape.disabled = false;
+          btnScrape.textContent = "Scrape & Generate Copy";
+          return;
+        }
+        if (!response.success) {
+          showError(`Scraping error: ${response.error}`);
+          btnScrape.disabled = false;
+          btnScrape.textContent = "Scrape & Generate Copy";
+          return;
+        }
+
+        const scrapedData = response.data;
+        
+        // Process images to send them multimodally
+        showStatus("Downloading & converting product images for visual scanning...");
+        const imageParts = [];
+        const imagesToProcess = scrapedData.images.slice(0, 3); // Grab top 3 product images
+        
+        for (const imgUrl of imagesToProcess) {
+          try {
+            const part = await urlToGenerativePart(imgUrl);
+            if (part) imageParts.push(part);
+          } catch (e) {
+            console.error("Failed to load image part:", imgUrl, e);
+          }
+        }
+        
+        showStatus("Sending request to Google Gemini API...");
+
+        try {
+          const listing = await generateCopywriting(
+            settings.apiKey,
+            settings.model || "gemini-flash-latest",
+            scrapedData,
+            imageParts,
+            settings.cancelPolicy || DEFAULT_CANCEL,
+            settings.returnPolicy || DEFAULT_RETURN
+          );
+
+          // Populate fields
+          outputTitle.value = listing.title;
+          titleCounter.textContent = `${listing.title.length}/140`;
+          if (listing.title.length > 140) titleCounter.classList.add("warning");
+          else titleCounter.classList.remove("warning");
+
+          outputPrice.value = listing.suggested_price || scrapedData.price || "";
+          outputTags.value = listing.tags.join(", ");
+          outputDesc.value = listing.description;
+
+          hideMessage();
+          outputContainer.classList.remove("hidden");
+        } catch (error) {
+          showError(`Generation failed: ${error.message}`);
+        } finally {
+          btnScrape.disabled = false;
+          btnScrape.textContent = "Scrape & Generate Copy";
+        }
+      });
+    } catch (err) {
+      showError(`An unexpected error occurred: ${err.message}`);
+      btnScrape.disabled = false;
+      btnScrape.textContent = "Scrape & Generate Copy";
+    }
   });
 
   // Call Gemini API with retries and structured output
