@@ -1,0 +1,67 @@
+themes:
+  bauhaus_beige:
+    name: "Bauhaus Minimalist"
+    images:
+      - name: "1_showcase"
+        description: "Main product showcase"
+        prompts:
+          - "nanobananapro2 item, professional product photography, centered on a warm cream-beige cyclorama studio pedestal, Bauhaus chrome frames, soft studio lighting, sharp focus, 8k resolution"
+          - "nanobananapro2 item, high-end design showcase, sitting on a minimalist concrete block, cream background, warm studio glow, elegant shadows"
+      
+      - name: "2_worn_or_used"
+        description: "Lifestyle worn/used view"
+        prompts:
+          - "nanobananapro2 item, worn by a woman with a white linen dress, soft sunny daylight, minimalist modern apartment background, candid lifestyle shot"
+          - "nanobananapro2 item, worn by a woman with dark skin tone in an olive green silk top, warm afternoon sunlight, luxury villa background, close-up lifestyle"
+          - "nanobananapro2 item, worn by a woman with warm skin tone in a simple beige knit sweater, soft shadows, cozy morning kitchen setting, elegant lifestyle"
+      
+      - name: "3_detail_close_up"
+        description: "Texture and details"
+        prompts:
+          - "extreme close-up macro shot of nanobananapro2 item, highlighting rich textures, metallic shadows, raw organic material, shallow depth of field"
+          - "detailed studio close-up of nanobananapro2 item, dramatic side lighting, high contrast shadows, premium commercial feel, sharp focus"
+          
+      - name: "4_packaging_or_extra"
+        description: "Packaging or unboxing view"
+        prompts:
+          - "nanobananapro2 item next to a minimalist kraft paper box, silk ribbon, soft elegant shadow overlay, clean studio backdrop"
+
+  cottagecore_rustic:
+    name: "Rustic Cottagecore"
+    images:
+      - name: "1_showcase"
+        description: "Main product showcase"
+        prompts:
+          - "nanobananapro2 item, placed on a rustic weathered wooden table, surrounded by dried wildflowers and small wheat sheaves, warm sunny morning lighting, cozy cottage aesthetic, sharp focus"
+          - "nanobananapro2 item, resting on a vintage linen cloth on a wooden bench, soft morning sunlight filtering through leaves, rustic charm"
+      
+      - name: "2_worn_or_used"
+        description: "Lifestyle worn/used view"
+        prompts:
+          - "nanobananapro2 item, worn by a woman wearing a floral prairie dress, walking through a sun-drenched flower meadow, vintage aesthetic"
+          - "nanobananapro2 item, worn by a woman in a cozy hand-knitted cream cardigan, holding a rustic ceramic mug in a cozy wooden cabin kitchen"
+      
+      - name: "3_detail_close_up"
+        description: "Texture and details"
+        prompts:
+          - "macro detail shot of nanobananapro2 item, soft focus, morning dew lighting, highlighting organic textures and handmade details"
+
+  cyberpunk_neon:
+    name: "Cyberpunk Neon"
+    images:
+      - name: "1_showcase"
+        description: "Main product showcase"
+        prompts:
+          - "nanobananapro2 item, professional product shot, placed on a wet dark asphalt surface with vibrant pink and blue neon reflections, moody volumetric haze, cyberpunk aesthetic"
+          - "nanobananapro2 item, resting on a futuristic metallic console, glowing cybernetic circuits, neon purple highlights, tech noir style"
+      
+      - name: "2_worn_or_used"
+        description: "Lifestyle worn/used view"
+        prompts:
+          - "nanobananapro2 item, worn by a cool woman in a black leather techwear jacket, standing in a rainy Tokyo alley illuminated by glowing neon signs"
+          - "nanobananapro2 item, worn by a person with futuristic holographic visor, moody neon ambient lighting, cyberpunk street fashion"
+      
+      - name: "3_detail_close_up"
+        description: "Texture and details"
+        prompts:
+          - "extreme close-up macro shot of nanobananapro2 item, highlighting sleek carbon fiber textures, chrome edges, and glowing micro-lines, high tech details"

@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local configurations and keys
+.env
+.env.example
+
+# Testing HTML dumps (AliExpress pages)
+*.html
+*_files/
+
+# Scraped assets and outputs
+inputs/
+outputs/
+scratch/
+scratch_free_test.png
+
+# IDE configurations
+.vscode/
+.idea/
+.gemini/

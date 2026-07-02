@@ -1,0 +1,7 @@
+google-genai
+pyyaml
+pillow
+beautifulsoup4
+requests
+playwright
+python-dotenv
