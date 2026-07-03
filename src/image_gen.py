@@ -15,9 +15,79 @@ def load_themes(config_path="themes.yaml"):
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001"):
-    """Generate a single image using Google Imagen/Gemini, with automatic free fallback."""
-    # Check if user preferred free generation in .env
+def generate_image_with_segmind(prompt, input_image_path, output_path):
+    """Generate image-to-image using Segmind SDK with SDXL or FLUX."""
+    try:
+        import segmind
+        import requests
+        api_key = os.getenv("SEGMIND_API_KEY")
+        if not api_key:
+            print("Segmind API key not found in environment.")
+            return None
+            
+        os.environ["SEGMIND_API_KEY"] = api_key
+        # Default to sdxl-img2img since it is fast and cheap
+        model = os.getenv("SEGMIND_MODEL", "sdxl-img2img")
+        strength = float(os.getenv("SEGMIND_STRENGTH", "0.7"))
+        
+        print(f"Generating Segmind img2img ({model}) using reference: {input_image_path}...")
+        
+        # Prepare parameters based on the model
+        params = {
+            "image": input_image_path,
+            "prompt": prompt,
+            "negative_prompt": "blurry, low quality, distorted, disfigured, text, watermarks, deformed, bad anatomy",
+            "base64": False
+        }
+        
+        # FLUX and SDXL use slightly different parameter names in Segmind
+        if "flux" in model.lower():
+            params["denoise"] = strength  # FLUX uses 'denoise' on Segmind
+            params["steps"] = 20
+            params["scheduler"] = "simple"
+            params["sampler_name"] = "euler"
+        else:
+            params["strength"] = strength
+            params["num_inference_steps"] = 25
+            params["guidance_scale"] = 7.5
+            
+        # Call the SDK run function (blocks until completion)
+        result = segmind.run(model, **params)
+        
+        if result and isinstance(result, dict):
+            status = result.get("status")
+            output_url = result.get("output")
+            
+            if status == "COMPLETED" and output_url:
+                print(f"Downloading Segmind output image from: {output_url}")
+                img_res = requests.get(output_url, timeout=30)
+                if img_res.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        f.write(img_res.content)
+                    print(f"Successfully saved Segmind image to {output_path}")
+                    return output_path
+                else:
+                    print(f"Failed to download image from Segmind. Status: {img_res.status_code}")
+            else:
+                print(f"Segmind job status: {status}. Error: {result.get('error') or 'None'}")
+        else:
+            print("Segmind API returned unexpected result format.")
+            
+        return None
+    except Exception as e:
+        print(f"Error during Segmind SDK generation: {e}")
+        return None
+
+def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None):
+    """Generate a single image using Segmind (if key present), Google Imagen, or free Pollinations fallback."""
+    # 1. Check if Segmind API key is configured and we have a reference image
+    segmind_key = os.getenv("SEGMIND_API_KEY")
+    if segmind_key and reference_image and os.path.exists(reference_image):
+        local_path = generate_image_with_segmind(prompt, reference_image, output_path)
+        if local_path:
+            return local_path
+            
+    # 2. Check if user preferred free generation in .env
     use_free = os.getenv("USE_FREE_GENERATOR", "false").lower() == "true"
     
     if use_free:

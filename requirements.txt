@@ -5,3 +5,5 @@ beautifulsoup4
 requests
 playwright
 python-dotenv
+openai
+segmind

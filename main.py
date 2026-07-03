@@ -158,7 +158,7 @@ def main():
         output_image_path = os.path.join(product_output_dir, output_image_name)
         
         print(f"\nGenerating: {output_image_name}")
-        local_path = generate_image_with_imagen(prompt, output_image_path, client, model=args.model)
+        local_path = generate_image_with_imagen(prompt, output_image_path, client, model=args.model, reference_image=image_paths[0] if image_paths else None)
         if local_path:
             generated_image_paths.append(local_path)
             

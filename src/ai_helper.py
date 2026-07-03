@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 from typing import List
 from dotenv import load_dotenv
 
+# Optional OpenAI fallback import
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 def generate_content_with_retry(client, model, contents, config=None, max_retries=3, initial_delay=2):
     """Wrapper around client.models.generate_content to handle rate limits and model fallback chain."""
     # Build list of fallback models
@@ -83,8 +89,25 @@ def get_genai_client():
     print("Warning: Neither GEMINI_API_KEY nor GCP_PROJECT is set. Attempting default auth...")
     return genai.Client()
 
+def get_openai_client():
+    """Initialize and return the OpenAI client if key is present."""
+    api_key = os.getenv("OPEN_AI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if api_key and OpenAI:
+        return OpenAI(api_key=api_key)
+    return None
+
+def pil_image_to_base64_data_uri(pil_img):
+    """Convert a PIL Image to a base64 JPEG data URI for OpenAI multimodal vision input."""
+    import base64
+    from io import BytesIO
+    buffered = BytesIO()
+    # Save as JPEG with 85 quality for compression and speed
+    pil_img.convert("RGB").save(buffered, format="JPEG", quality=85)
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{img_str}"
+
 def generate_description_from_images(image_paths, client=None):
-    """Scan product images using multimodal Gemini to generate product description."""
+    """Scan product images using multimodal Gemini or OpenAI to generate product description."""
     if not client:
         client = get_genai_client()
         
@@ -95,7 +118,7 @@ def generate_description_from_images(image_paths, client=None):
             try:
                 pil_images.append(Image.open(path))
             except Exception as e:
-                print(f"Could not load image {path} for Gemini analysis: {e}")
+                print(f"Could not load image {path} for analysis: {e}")
                 
     if not pil_images:
         return "No visual description available (no images downloaded)."
@@ -110,6 +133,43 @@ def generate_description_from_images(image_paths, client=None):
         "any brand names or printed logos. Return a detailed and highly accurate textual summary."
     )
     
+    # Try OpenAI first if configured
+    openai_client = get_openai_client()
+    if openai_client:
+        print("Using OpenAI to scan product images visually...")
+        try:
+            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+            for img in pil_images:
+                try:
+                    data_uri = pil_image_to_base64_data_uri(img)
+                    messages[0]["content"].append({
+                        "type": "image_url",
+                        "image_url": {"url": data_uri}
+                    })
+                except Exception as e:
+                    print(f"Failed to convert PIL image for OpenAI: {e}")
+            
+            response = openai_client.chat.completions.create(
+                model=openai_model,
+                messages=messages,
+                max_tokens=1000
+            )
+            print("Visual description generated successfully via OpenAI.")
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Error during OpenAI visual description generation: {e}. Falling back to Gemini...")
+            
     try:
         response = generate_content_with_retry(
             client=client,
@@ -124,14 +184,34 @@ def generate_description_from_images(image_paths, client=None):
 
 def clean_tags(tags, client):
     """Ensure all tags are under 20 characters, split/condensing any that exceed the limit."""
+    openai_client = get_openai_client()
     cleaned = []
     for tag in tags:
         tag = tag.strip().lower()
         if len(tag) <= 20:
             cleaned.append(tag)
         else:
-            # Let's ask Gemini to condense this specific tag phrase under 20 chars
             print(f"Tag too long ({len(tag)} chars): '{tag}'. Condensing...")
+            
+            # Try OpenAI first if configured
+            if openai_client:
+                try:
+                    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                    prompt = f"Shorten this keyword phrase to be under 20 characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
+                    response = openai_client.chat.completions.create(
+                        model=openai_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=20
+                    )
+                    short_tag = response.choices[0].message.content.strip().replace('"', '').replace("'", "")
+                    if len(short_tag) <= 20:
+                        cleaned.append(short_tag)
+                        print(f"Condensed tag via OpenAI: '{tag}' -> '{short_tag}'")
+                        continue
+                except Exception as e:
+                    print(f"Error condensing tag '{tag}' via OpenAI: {e}. Falling back to Gemini...")
+            
+            # Fallback to Gemini
             try:
                 prompt = f"Shorten this keyword phrase to be under 20 characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
                 response = generate_content_with_retry(
@@ -144,7 +224,7 @@ def clean_tags(tags, client):
                     cleaned.append(short_tag)
                     print(f"Condensed tag: '{tag}' -> '{short_tag}'")
                 else:
-                    # Hard fallback: truncate or split
+                    # Hard fallback: truncate
                     truncated = tag[:20].strip()
                     cleaned.append(truncated)
                     print(f"Fallback truncate tag: '{tag}' -> '{truncated}'")
@@ -163,7 +243,7 @@ def clean_tags(tags, client):
     return final_tags[:13]
 
 def write_etsy_listing(title, description, price="", client=None):
-    """Write Etsy title, description, and tags from AliExpress details using Gemini."""
+    """Write Etsy title, description, and tags from AliExpress details using Gemini or OpenAI."""
     if not client:
         client = get_genai_client()
         
@@ -177,10 +257,40 @@ def write_etsy_listing(title, description, price="", client=None):
         "Guidelines:\n"
         "1. Write an SEO-friendly, catchy Title under 140 characters.\n"
         "2. Write a detailed, structured Description focusing on value, features, and specs.\n"
-        "3. Provide exactly 13 relevant search Tags (keywords or phrases).\n"
-        "4. Suggest a retail price in USD (suggest a reasonable price if no price is provided)."
+        "3. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
+        "4. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n\n"
+        "Output your response strictly as a JSON object with keys: 'title', 'description', 'tags' (list of strings), and 'suggested_price'."
     )
     
+    # Try OpenAI first if configured
+    openai_client = get_openai_client()
+    if openai_client:
+        print("Generating Etsy-optimized listing content via OpenAI...")
+        try:
+            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response = openai_client.chat.completions.create(
+                model=openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            raw_text = response.choices[0].message.content
+            listing_data = json.loads(raw_text)
+            
+            # Apply strict guardrails:
+            # A. Condense tags > 20 characters
+            listing_data["tags"] = clean_tags(listing_data["tags"], client)
+            
+            # B. Inject cancellation/return policy footer
+            policy_footer = (
+                "\n\n---\n"
+                "Cancellation Policy: Cancellation is allowed within 5 hours after placing the order.\n"
+                "Returns & Refunds Policy: Returns and refunds are accepted for items that arrive damaged or incorrect only."
+            )
+            listing_data["description"] = listing_data["description"].strip() + policy_footer
+            return listing_data
+        except Exception as e:
+            print(f"Error generating listing content via OpenAI: {e}. Falling back to Gemini...")
+            
     try:
         response = generate_content_with_retry(
             client=client,
@@ -229,6 +339,37 @@ def generate_image_prompt_details(image_path_or_text, client=None):
             "the texture, the colors, materials, straps, details, and the overall styling. Be descriptive and detailed "
             "(about 50-70 words). Do not include any introductory or concluding text, do not write 'Here is'."
         )
+        
+        # Try OpenAI first if configured
+        openai_client = get_openai_client()
+        if openai_client:
+            print("Using OpenAI to analyze reference image for visual details...")
+            try:
+                pil_img = Image.open(image_path_or_text)
+                data_uri = pil_image_to_base64_data_uri(pil_img)
+                openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                
+                response = openai_client.chat.completions.create(
+                    model=openai_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": data_uri}}
+                            ]
+                        }
+                    ],
+                    max_tokens=250
+                )
+                visual_details = response.choices[0].message.content.strip().replace('\n', ' ').strip()
+                if visual_details.startswith('"') and visual_details.endswith('"'):
+                    visual_details = visual_details[1:-1]
+                print(f"Extracted visual details via OpenAI: {visual_details}")
+                return visual_details
+            except Exception as e:
+                print(f"Error generating visual details from image via OpenAI: {e}. Falling back to Gemini...")
+                
         try:
             pil_img = Image.open(image_path_or_text)
             response = generate_content_with_retry(
@@ -253,6 +394,25 @@ def generate_image_prompt_details(image_path_or_text, client=None):
         "Do not write introductory text, do not use bullet points.\n\n"
         f"Product Details:\n{image_path_or_text}"
     )
+    
+    # Try OpenAI first if configured
+    openai_client = get_openai_client()
+    if openai_client:
+        try:
+            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response = openai_client.chat.completions.create(
+                model=openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100
+            )
+            visual_details = response.choices[0].message.content.strip().replace('\n', ' ').strip()
+            if visual_details.startswith('"') and visual_details.endswith('"'):
+                visual_details = visual_details[1:-1]
+            print(f"Extracted visual details from text via OpenAI: {visual_details}")
+            return visual_details
+        except Exception as e:
+            print(f"Error generating visual details from text via OpenAI: {e}. Falling back to Gemini...")
+            
     try:
         response = generate_content_with_retry(
             client=client,
