@@ -596,6 +596,55 @@ body {
     border-radius: 6px;
 }
 
+.button-group {
+    display: flex;
+    gap: 8px;
+}
+
+.prompt-card-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.prompt-card-select {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-stack);
+    font-size: 11px;
+    background-color: var(--card-bg);
+    color: var(--primary);
+    outline: none;
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+}
+
+.prompt-card-select:focus {
+    border-color: var(--secondary);
+}
+
+.btn-danger {
+    background-color: var(--card-bg);
+    color: var(--accent-red);
+    border-color: var(--accent-red);
+    box-shadow: 2px 2px 0px var(--accent-red);
+}
+
+.btn-danger:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px var(--accent-red);
+    background-color: var(--accent-red);
+    color: #FFFFFF;
+}
+
+.btn-danger:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0px var(--accent-red);
+}
+
 .image-placeholder {
     display: flex;
     align-items: center;

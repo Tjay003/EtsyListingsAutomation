@@ -141,11 +141,15 @@ async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool,
         product_output_dir = os.path.join("outputs", product_slug)
         os.makedirs(product_output_dir, exist_ok=True)
         
-        # Copy first scraped image to original.png in output folder
-        ref_image = os.path.join(product_output_dir, "original.png")
-        if image_paths and os.path.exists(image_paths[0]):
-            shutil.copy(image_paths[0], ref_image)
-            
+        # Copy ALL scraped images to output folder as scraped_1.png, scraped_2.png, etc.
+        scraped_web_paths = []
+        for idx, img_path in enumerate(image_paths):
+            if os.path.exists(img_path):
+                filename = f"scraped_{idx+1}.png"
+                dest_path = os.path.join(product_output_dir, filename)
+                shutil.copy(img_path, dest_path)
+                scraped_web_paths.append(f"/outputs/{product_slug}/{filename}")
+                
         # Phase 4: Save metadata (with rolled prompts)
         etsy_listing["prompts"] = prompts_to_run
         metadata_path = os.path.join(product_output_dir, "metadata.json")
@@ -157,6 +161,7 @@ async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool,
             "message": "Scraping and copywriting complete! Ready for image generation.",
             "listing": etsy_listing,
             "prompts": prompts_to_run,
+            "scraped_images": scraped_web_paths,
             "output_dir_name": product_slug
         })
         
@@ -179,6 +184,7 @@ class ImageGenerateRequest(BaseModel):
     prompt: str
     output_dir_name: str
     image_name: str
+    reference_image: str  # e.g. "scraped_1.png" or "scraped_2.png"
 
 @app.post("/api/generate-image")
 def api_generate_image(req: ImageGenerateRequest):
@@ -188,16 +194,12 @@ def api_generate_image(req: ImageGenerateRequest):
         if not os.path.exists(product_output_dir):
             raise HTTPException(status_code=404, detail="Listing output directory not found")
             
-        ref_image = os.path.join(product_output_dir, "original.png")
+        ref_image = os.path.join(product_output_dir, req.reference_image)
         
-        # If original.png is missing but inputs has it, copy it
+        # If the requested ref_image is missing, fall back to scraped_1.png
         if not os.path.exists(ref_image):
-            input_dir = os.path.join("inputs", req.output_dir_name)
-            if os.path.exists(input_dir):
-                possible_ref = os.path.join(input_dir, "product_img_1.png")
-                if os.path.exists(possible_ref):
-                    shutil.copy(possible_ref, ref_image)
-                    
+            ref_image = os.path.join(product_output_dir, "scraped_1.png")
+            
         output_image_path = os.path.join(product_output_dir, req.image_name)
         
         client = get_genai_client()
