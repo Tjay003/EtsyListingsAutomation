@@ -84,7 +84,7 @@ async def status_stream():
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool, preset: str):
+def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool, preset: str):
     try:
         import shutil
         client = get_genai_client()
