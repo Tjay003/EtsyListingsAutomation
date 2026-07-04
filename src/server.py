@@ -84,8 +84,9 @@ async def status_stream():
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool):
+async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool, preset: str):
     try:
+        import shutil
         client = get_genai_client()
         streamer.publish({"status": "progress", "message": "Initializing client..."})
         
@@ -123,7 +124,7 @@ async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool)
         streamer.publish({"status": "progress", "message": "Etsy details generated successfully."})
         
         # Phase 3: Image Prompts
-        streamer.publish({"status": "progress", "message": "Analyzing image styles..."})
+        streamer.publish({"status": "progress", "message": "Analyzing image styles & presets..."})
         reference_input = image_paths[0] if (image_paths and os.path.exists(image_paths[0])) else description
         visual_details = generate_image_prompt_details(reference_input, client)
         
@@ -133,40 +134,29 @@ async def run_pipeline(url: str, theme: str, product_trigger: str, headed: bool)
             combined_trigger = product_trigger
             
         themes_config = load_themes("themes.yaml")
-        prompts_to_run = roll_theme_prompts(theme, themes_config, combined_trigger)
+        prompts_to_run = roll_theme_prompts(theme, themes_config, combined_trigger, preset_name=preset)
         
         # Create output dir
         product_slug = sanitize_filename(etsy_listing.get('title') or "etsy_listing")
         product_output_dir = os.path.join("outputs", product_slug)
         os.makedirs(product_output_dir, exist_ok=True)
         
-        generated_images = []
-        for i, image_item in enumerate(prompts_to_run):
-            img_name = image_item["name"]
-            prompt = image_item["prompt"]
+        # Copy first scraped image to original.png in output folder
+        ref_image = os.path.join(product_output_dir, "original.png")
+        if image_paths and os.path.exists(image_paths[0]):
+            shutil.copy(image_paths[0], ref_image)
             
-            output_image_name = f"{img_name}.png"
-            output_image_path = os.path.join(product_output_dir, output_image_name)
-            
-            streamer.publish({"status": "progress", "message": f"Rendering lifestyle photo {i+1}/{len(prompts_to_run)} ({img_name})..."})
-            
-            ref_image = image_paths[0] if image_paths else None
-            local_path = generate_image_with_imagen(prompt, output_image_path, client, reference_image=ref_image)
-            
-            if local_path:
-                web_path = f"/outputs/{product_slug}/{output_image_name}"
-                generated_images.append(web_path)
-                
-        # Phase 4: Save metadata
+        # Phase 4: Save metadata (with rolled prompts)
+        etsy_listing["prompts"] = prompts_to_run
         metadata_path = os.path.join(product_output_dir, "metadata.json")
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(etsy_listing, f, indent=4, ensure_ascii=False)
             
         streamer.publish({
             "status": "done",
-            "message": "Automation pipeline completed successfully!",
+            "message": "Scraping and copywriting complete! Ready for image generation.",
             "listing": etsy_listing,
-            "images": generated_images,
+            "prompts": prompts_to_run,
             "output_dir_name": product_slug
         })
         
@@ -179,10 +169,52 @@ def start_pipeline(
     url: str = Query(...),
     theme: str = Query("bauhaus_beige"),
     product_trigger: str = Query("product"),
-    headed: bool = Query(False)
+    headed: bool = Query(False),
+    preset: str = Query("product_staging")
 ):
-    background_tasks.add_task(run_pipeline, url, theme, product_trigger, headed)
+    background_tasks.add_task(run_pipeline, url, theme, product_trigger, headed, preset)
     return {"message": "Pipeline execution started."}
+
+class ImageGenerateRequest(BaseModel):
+    prompt: str
+    output_dir_name: str
+    image_name: str
+
+@app.post("/api/generate-image")
+def api_generate_image(req: ImageGenerateRequest):
+    try:
+        import shutil
+        product_output_dir = os.path.join("outputs", req.output_dir_name)
+        if not os.path.exists(product_output_dir):
+            raise HTTPException(status_code=404, detail="Listing output directory not found")
+            
+        ref_image = os.path.join(product_output_dir, "original.png")
+        
+        # If original.png is missing but inputs has it, copy it
+        if not os.path.exists(ref_image):
+            input_dir = os.path.join("inputs", req.output_dir_name)
+            if os.path.exists(input_dir):
+                possible_ref = os.path.join(input_dir, "product_img_1.png")
+                if os.path.exists(possible_ref):
+                    shutil.copy(possible_ref, ref_image)
+                    
+        output_image_path = os.path.join(product_output_dir, req.image_name)
+        
+        client = get_genai_client()
+        local_path = generate_image_with_imagen(
+            req.prompt,
+            output_image_path,
+            client,
+            reference_image=ref_image if os.path.exists(ref_image) else None
+        )
+        
+        if local_path:
+            web_path = f"/outputs/{req.output_dir_name}/{req.image_name}"
+            return {"status": "success", "image_url": web_path}
+        else:
+            raise HTTPException(status_code=500, detail="Image generation failed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/save-listing")
 def save_listing(req: ListingSaveRequest):

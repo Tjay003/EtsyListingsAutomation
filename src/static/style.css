@@ -498,47 +498,105 @@ body {
     color: var(--accent-red);
 }
 
-/* IMAGES GRID */
-.images-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    flex: 1;
-    min-height: 280px;
+/* IMAGES GRID & WORKSPACE */
+.images-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
 }
 
-.image-card {
+.images-grid.vertical-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+    min-height: 280px;
+    overflow-y: auto;
+}
+
+.prompt-card {
     border: 1.5px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 10px;
+    background-color: var(--card-bg);
+    padding: 16px;
+    display: flex;
+    gap: 16px;
+    box-shadow: 3px 3px 0px var(--secondary);
+    transition: all 0.15s ease-out;
+}
+
+.prompt-card-img-wrapper {
+    width: 130px;
+    height: 130px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
     overflow: hidden;
     position: relative;
     background-color: var(--bg-canvas);
-    aspect-ratio: 1;
-    box-shadow: 2px 2px 0px var(--secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.image-card img {
+.prompt-card-img-wrapper img {
     width: 100%;
     height: 100%;
     object-fit: cover;
 }
 
-.image-label {
-    position: absolute;
-    bottom: 6px;
-    left: 6px;
-    background-color: var(--primary);
-    color: #FFFFFF;
-    font-size: 10px;
+.prompt-card-img-wrapper .empty-photo-icon {
+    color: var(--neutral-grey);
+}
+
+.prompt-card-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.prompt-card-textarea {
+    width: 100%;
+    height: 70px;
+    padding: 8px 12px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-stack);
+    font-size: 12px;
+    resize: none;
+    outline: none;
+    line-height: 1.4;
+    background-color: var(--bg-canvas);
+}
+
+.prompt-card-textarea:focus {
+    background-color: var(--card-bg);
+    border-color: var(--secondary);
+}
+
+.prompt-card-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.prompt-card-label {
+    font-size: 11px;
     font-weight: 700;
-    padding: 3px 6px;
-    border-radius: 4px;
     text-transform: uppercase;
+    color: var(--neutral-grey);
     letter-spacing: 0.5px;
 }
 
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 11px;
+    border-radius: 6px;
+}
+
 .image-placeholder {
-    grid-column: span 2;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -548,5 +606,7 @@ body {
     color: var(--neutral-grey);
     font-size: 12px;
     font-weight: 500;
-    padding: 24px;
+    padding: 36px 24px;
+    min-height: 180px;
 }
+

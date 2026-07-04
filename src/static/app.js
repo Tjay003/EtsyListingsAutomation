@@ -3,10 +3,12 @@ document.addEventListener("DOMContentLoaded", () => {
     // Elements
     const urlInput = document.getElementById("product-url");
     const themeSelector = document.getElementById("theme-selector");
+    const presetSelector = document.getElementById("preset-selector");
     const triggerKeyword = document.getElementById("trigger-keyword");
     const headedMode = document.getElementById("headed-mode");
     const btnGenerate = document.getElementById("btn-generate");
     const btnSave = document.getElementById("btn-save");
+    const btnGenerateAllImages = document.getElementById("btn-generate-all-images");
     
     const consoleLogs = document.getElementById("console-logs");
     const workspace = document.getElementById("listing-workspace");
@@ -20,7 +22,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     // State
     let activeListing = null;
-    let activeImages = [];
+    let activePrompts = [];
     let outputDirName = "";
     let eventSource = null;
 
@@ -38,7 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             }
         })
-        .catch(err => logConsole("error", `Failed to load themes config: ${err.message}`));
+        .catch(err => logConsole("error", `Failed to load themes: ${err.message}`));
 
     // Add log entry to custom console
     function logConsole(type, message) {
@@ -53,6 +55,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function setControlsDisabled(disabled) {
         urlInput.disabled = disabled;
         themeSelector.disabled = disabled;
+        presetSelector.disabled = disabled;
         triggerKeyword.disabled = disabled;
         headedMode.disabled = disabled;
         btnGenerate.disabled = disabled;
@@ -76,7 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 
                 // Set data
                 activeListing = data.listing;
-                activeImages = data.images;
+                activePrompts = data.prompts;
                 outputDirName = data.output_dir_name;
                 
                 populateWorkspace();
@@ -100,6 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         workspace.classList.remove("disabled");
         btnSave.disabled = false;
+        btnGenerateAllImages.disabled = false;
         
         // Title
         etsyTitle.value = activeListing.title || "";
@@ -117,8 +121,8 @@ document.addEventListener("DOMContentLoaded", () => {
         // Tags
         renderTags(activeListing.tags || []);
         
-        // Images
-        renderImages(activeImages);
+        // Render editable prompt slots
+        renderPromptCards(activePrompts);
     }
 
     // Update Title character indicator
@@ -171,33 +175,144 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Render lifestyle images grid
-    function renderImages(images) {
+    // Render list of prompt editing cards
+    function renderPromptCards(prompts) {
         imagesGrid.innerHTML = "";
         
-        if (!images || images.length === 0) {
-            imagesGrid.innerHTML = `<div class="image-placeholder">No images generated. Check pipeline logs.</div>`;
-            return;
-        }
+        const labels = {
+            "1_showcase": "Showcase Photo",
+            "2_worn_or_used": "Worn / Lifestyle Photo",
+            "3_detail_close_up": "Close-up Detail Photo",
+            "4_packaging_or_extra": "Packaging Photo"
+        };
         
-        const labels = ["Showcase", "Worn/Used", "Close-up", "Detail/Extra"];
-        
-        images.forEach((imgSrc, idx) => {
+        prompts.forEach((item) => {
+            const sectionName = item.name;
             const card = document.createElement("div");
-            card.className = "image-card";
+            card.className = "prompt-card";
+            card.dataset.section = sectionName;
             
-            const img = document.createElement("img");
-            // Add cachebuster to load fresh images if overwritten
-            img.src = `${imgSrc}?t=${new Date().getTime()}`;
-            img.alt = labels[idx] || "Product Photo";
+            // Image preview wrapper
+            const imgWrapper = document.createElement("div");
+            imgWrapper.className = "prompt-card-img-wrapper";
+            
+            // Render blank visual state or loaded image
+            const imgEl = document.createElement("img");
+            imgEl.style.display = "none";
+            
+            const emptyIcon = document.createElement("div");
+            emptyIcon.className = "empty-photo-icon";
+            emptyIcon.innerHTML = `
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+            `;
+            
+            imgWrapper.appendChild(imgEl);
+            imgWrapper.appendChild(emptyIcon);
+            
+            // Content panel
+            const content = document.createElement("div");
+            content.className = "prompt-card-content";
+            
+            const textGroup = document.createElement("div");
+            textGroup.className = "input-group";
+            textGroup.style.marginBottom = "0px";
             
             const label = document.createElement("span");
-            label.className = "image-label";
-            label.textContent = labels[idx] || `Photo ${idx + 1}`;
+            label.className = "prompt-card-label";
+            label.textContent = labels[sectionName] || sectionName;
             
-            card.appendChild(img);
-            card.appendChild(label);
+            const textarea = document.createElement("textarea");
+            textarea.className = "prompt-card-textarea";
+            textarea.value = item.prompt;
+            
+            textGroup.appendChild(label);
+            textGroup.appendChild(textarea);
+            
+            const actions = document.createElement("div");
+            actions.className = "prompt-card-actions";
+            
+            const statusIndicator = document.createElement("span");
+            statusIndicator.className = "prompt-card-label";
+            statusIndicator.style.color = "var(--neutral-grey)";
+            statusIndicator.textContent = "Status: Not Generated";
+            
+            const runBtn = document.createElement("button");
+            runBtn.className = "secondary-btn btn-sm";
+            runBtn.innerHTML = `
+                <span>Generate Photo</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+            `;
+            
+            runBtn.addEventListener("click", () => {
+                generateSingleImage(textarea.value, `${sectionName}.png`, imgEl, emptyIcon, runBtn, statusIndicator);
+            });
+            
+            actions.appendChild(statusIndicator);
+            actions.appendChild(runBtn);
+            
+            content.appendChild(textGroup);
+            content.appendChild(actions);
+            
+            card.appendChild(imgWrapper);
+            card.appendChild(content);
             imagesGrid.appendChild(card);
+        });
+    }
+
+    // Call API to generate a single image card
+    function generateSingleImage(promptText, imageName, imgEl, emptyIcon, btn, statusLabel) {
+        btn.disabled = true;
+        const origText = btn.querySelector("span").textContent;
+        btn.querySelector("span").textContent = "Generating...";
+        statusLabel.textContent = "Status: Querying Fal.ai...";
+        statusLabel.style.color = "var(--secondary)";
+        
+        logConsole("progress", `Sending image request for '${imageName}' to Fal.ai...`);
+        
+        const payload = {
+            prompt: promptText,
+            output_dir_name: outputDirName,
+            image_name: imageName
+        };
+        
+        return fetch("/api/generate-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        })
+        .then(res => {
+            if (!res.ok) throw new Error(`Server returned error status ${res.status}`);
+            return res.json();
+        })
+        .then(data => {
+            if (data.status === "success") {
+                logConsole("success", `Successfully generated '${imageName}'!`);
+                statusLabel.textContent = "Status: Ready";
+                statusLabel.style.color = "#34A853";
+                
+                // Show loaded image
+                imgEl.src = `${data.image_url}?t=${new Date().getTime()}`;
+                imgEl.style.display = "block";
+                emptyIcon.style.display = "none";
+                
+                btn.querySelector("span").textContent = "Regenerate";
+            } else {
+                throw new Error("API reported failure");
+            }
+            btn.disabled = false;
+        })
+        .catch(err => {
+            logConsole("error", `Failed to generate '${imageName}': ${err.message}`);
+            statusLabel.textContent = "Status: Failed";
+            statusLabel.style.color = "var(--accent-red)";
+            btn.querySelector("span").textContent = "Retry";
+            btn.disabled = false;
         });
     }
 
@@ -213,6 +328,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Reset states
         workspace.classList.add("disabled");
         btnSave.disabled = true;
+        btnGenerateAllImages.disabled = true;
         consoleLogs.innerHTML = "";
         
         logConsole("system", "Connecting to pipeline status stream...");
@@ -232,9 +348,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const theme = themeSelector.value;
         const trigger = triggerKeyword.value.trim() || "product";
         const headed = headedMode.checked;
+        const preset = presetSelector.value;
         
         // Call FastAPI generate endpoint
-        const apiPath = `/api/scrape-and-generate?url=${encodeURIComponent(url)}&theme=${encodeURIComponent(theme)}&product_trigger=${encodeURIComponent(trigger)}&headed=${headed}`;
+        const apiPath = `/api/scrape-and-generate?url=${encodeURIComponent(url)}&theme=${encodeURIComponent(theme)}&product_trigger=${encodeURIComponent(trigger)}&headed=${headed}&preset=${encodeURIComponent(preset)}`;
         
         fetch(apiPath, { method: "POST" })
             .then(res => res.json())
@@ -246,6 +363,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 cleanupStream();
                 setControlsDisabled(false);
             });
+    });
+
+    // Generate all images sequentially
+    btnGenerateAllImages.addEventListener("click", async () => {
+        btnGenerateAllImages.disabled = true;
+        logConsole("system", "Starting batch Fal.ai image generations for all slots...");
+        
+        const cards = document.querySelectorAll(".prompt-card");
+        for (const card of cards) {
+            const sectionName = card.dataset.section;
+            const textarea = card.querySelector(".prompt-card-textarea");
+            const imgEl = card.querySelector(".prompt-card-img-wrapper img");
+            const emptyIcon = card.querySelector(".empty-photo-icon");
+            const btn = card.querySelector("button");
+            const statusLabel = card.querySelector(".prompt-card-actions span");
+            
+            // Execute and wait for completion sequentially
+            await generateSingleImage(textarea.value, `${sectionName}.png`, imgEl, emptyIcon, btn, statusLabel);
+        }
+        
+        logConsole("success", "All image generation slots finished processing.");
+        btnGenerateAllImages.disabled = false;
     });
 
     // Save changes
