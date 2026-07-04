@@ -7,4 +7,6 @@ playwright
 python-dotenv
 openai
 fal-client
+fastapi
+uvicorn
 
