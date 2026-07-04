@@ -15,75 +15,63 @@ def load_themes(config_path="themes.yaml"):
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def generate_image_with_segmind(prompt, input_image_path, output_path):
-    """Generate image-to-image using Segmind SDK with SDXL or FLUX."""
+def generate_image_with_fal(prompt, input_image_path, output_path):
+    """Generate image-to-image using Fal.ai SDK with FLUX or SDXL."""
     try:
-        import segmind
+        import fal_client
         import requests
-        api_key = os.getenv("SEGMIND_API_KEY")
+        
+        api_key = os.getenv("FAL_KEY")
         if not api_key:
-            print("Segmind API key not found in environment.")
+            print("Fal.ai API key (FAL_KEY) not found in environment.")
             return None
             
-        os.environ["SEGMIND_API_KEY"] = api_key
-        # Default to sdxl-img2img since it is fast and cheap
-        model = os.getenv("SEGMIND_MODEL", "sdxl-img2img")
-        strength = float(os.getenv("SEGMIND_STRENGTH", "0.7"))
+        os.environ["FAL_KEY"] = api_key
         
-        print(f"Generating Segmind img2img ({model}) using reference: {input_image_path}...")
+        # Default to FLUX Dev image-to-image
+        model = os.getenv("FAL_MODEL", "fal-ai/flux/dev/image-to-image")
+        strength = float(os.getenv("FAL_STRENGTH", "0.75"))
         
-        # Prepare parameters based on the model
-        params = {
-            "image": input_image_path,
+        print(f"Uploading reference image: {input_image_path} to Fal.ai...")
+        image_url = fal_client.upload_file(input_image_path)
+        
+        print(f"Generating Fal.ai img2img ({model}) using reference URL: {image_url}...")
+        
+        # Prepare parameters
+        arguments = {
             "prompt": prompt,
-            "negative_prompt": "blurry, low quality, distorted, disfigured, text, watermarks, deformed, bad anatomy",
-            "base64": False
+            "image_url": image_url,
+            "strength": strength,
         }
         
-        # FLUX and SDXL use slightly different parameter names in Segmind
-        if "flux" in model.lower():
-            params["denoise"] = strength  # FLUX uses 'denoise' on Segmind
-            params["steps"] = 20
-            params["scheduler"] = "simple"
-            params["sampler_name"] = "euler"
-        else:
-            params["strength"] = strength
-            params["num_inference_steps"] = 25
-            params["guidance_scale"] = 7.5
-            
-        # Call the SDK run function (blocks until completion)
-        result = segmind.run(model, **params)
+        # Call Fal.ai
+        result = fal_client.subscribe(model, arguments=arguments)
         
-        if result and isinstance(result, dict):
-            status = result.get("status")
-            output_url = result.get("output")
-            
-            if status == "COMPLETED" and output_url:
-                print(f"Downloading Segmind output image from: {output_url}")
-                img_res = requests.get(output_url, timeout=30)
-                if img_res.status_code == 200:
-                    with open(output_path, "wb") as f:
-                        f.write(img_res.content)
-                    print(f"Successfully saved Segmind image to {output_path}")
-                    return output_path
-                else:
-                    print(f"Failed to download image from Segmind. Status: {img_res.status_code}")
+        if result and "images" in result and len(result["images"]) > 0:
+            output_url = result["images"][0]["url"]
+            print(f"Downloading Fal.ai output image from: {output_url}")
+            img_res = requests.get(output_url, timeout=30)
+            if img_res.status_code == 200:
+                with open(output_path, "wb") as f:
+                    f.write(img_res.content)
+                print(f"Successfully saved Fal.ai image to {output_path}")
+                return output_path
             else:
-                print(f"Segmind job status: {status}. Error: {result.get('error') or 'None'}")
+                print(f"Failed to download image from Fal.ai. Status: {img_res.status_code}")
         else:
-            print("Segmind API returned unexpected result format.")
+            print("Fal.ai response contained no images.")
             
         return None
     except Exception as e:
-        print(f"Error during Segmind SDK generation: {e}")
+        print(f"Error during Fal.ai generation: {e}")
         return None
 
 def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None):
-    """Generate a single image using Segmind (if key present), Google Imagen, or free Pollinations fallback."""
-    # 1. Check if Segmind API key is configured and we have a reference image
-    segmind_key = os.getenv("SEGMIND_API_KEY")
-    if segmind_key and reference_image and os.path.exists(reference_image):
-        local_path = generate_image_with_segmind(prompt, reference_image, output_path)
+    """Generate a single image using Fal.ai (if key present), Google Imagen, or free Pollinations fallback."""
+    # 1. Check if Fal.ai API key is configured and we have a reference image
+    fal_key = os.getenv("FAL_KEY")
+    if fal_key and reference_image and os.path.exists(reference_image):
+        local_path = generate_image_with_fal(prompt, reference_image, output_path)
         if local_path:
             return local_path
             

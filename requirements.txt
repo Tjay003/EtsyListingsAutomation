@@ -6,4 +6,5 @@ requests
 playwright
 python-dotenv
 openai
-segmind
+fal-client
+
