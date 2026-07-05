@@ -82,6 +82,9 @@ async function scrapePage() {
   // 2. Scrape Price
   let price = "";
   const priceSelectors = [
+    '[class*="price-default--current--"]',
+    '[class*="price-default--currentWrap--"]',
+    '[class*="price--currentPriceText--"]',
     ".price--currentPriceText--2s1756t",
     ".price--currentPriceText--32sS1kE",
     "[data-pl='product-price']",
@@ -157,32 +160,51 @@ async function scrapePage() {
     }
   });
 
-  // 4. Scrape Specifications & Details
-  const specs = [];
-  const specItems = document.querySelectorAll(".specification--prop--3Z4tNf0, .specification--title--2m1vV, .product-prop, .sku-property-text");
-  specItems.forEach(item => {
-    const text = item.innerText.trim();
-    if (text && !specs.includes(text)) {
-      specs.push(text);
+  // Helper to extract text contents recursively, including traversing open shadow roots
+  const getDeepTextContent = (node) => {
+    if (!node) return "";
+    let text = "";
+    
+    if (node.shadowRoot) {
+      text += getDeepTextContent(node.shadowRoot);
+    }
+    
+    if (node.childNodes && node.childNodes.length > 0) {
+      node.childNodes.forEach(child => {
+        if (child.nodeType === Node.TEXT_NODE) {
+          text += child.textContent;
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          text += " " + getDeepTextContent(child) + " ";
+        }
+      });
+    } else {
+      text += node.textContent || "";
+    }
+    return text;
+  };
+
+  // 4. Scrape Specifications & Details (handle wildcard prefix class names)
+  const specsObj = {};
+  const propContainers = document.querySelectorAll('[class*="specification--prop--"], .product-prop');
+  propContainers.forEach(container => {
+    const titleEl = container.querySelector('[class*="specification--title--"], .title, .name');
+    const descEl = container.querySelector('[class*="specification--desc--"], .value, .desc');
+    if (titleEl && descEl) {
+      const key = titleEl.innerText.replace(/:$/, "").trim();
+      const val = descEl.innerText.trim();
+      if (key && val) {
+        specsObj[key] = val;
+      }
     }
   });
 
-
-
-  // Extract description text
-  const descTextContainer = document.querySelector("#product-description, .product-description, #desc-lazyload-container, .detail-desc-decorate-richtext");
+  // Extract description text, accounting for Shadow DOM
+  const descContainer = document.querySelector('[class*="description--product-description--"], [data-pl="product-description"], #product-description, .product-description, #desc-lazyload-container, .detail-desc-decorate-richtext');
   let descText = "";
-  if (descTextContainer) {
-    descText = descTextContainer.innerText.trim();
+  if (descContainer) {
+    descText = getDeepTextContent(descContainer).replace(/\s+/g, " ").trim();
   }
 
-  // Convert spec array to object
-  let specsObj = {};
-  for (let i = 0; i < specs.length; i += 2) {
-    if (i + 1 < specs.length) {
-      specsObj[specs[i].replace(":", "")] = specs[i+1];
-    }
-  }
 
   // ==========================================
   // FETCH HIDDEN DESCRIPTION IMAGES
@@ -235,8 +257,9 @@ async function scrapePage() {
     // Wait for images to lazy-load after clicking
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // Scrape images from the description container specifically
-    const descImgs = descImgContainer.querySelectorAll('img');
+    // Scrape images from the description container specifically (including shadow DOM if present)
+    const rootNode = descImgContainer.shadowRoot || descImgContainer;
+    const descImgs = rootNode.querySelectorAll('img');
     descImgs.forEach(img => {
       const src = img.src || img.getAttribute('data-src') || img.getAttribute('lazy-src') || img.getAttribute('data-lazy-src');
       if (src && (PRODUCT_HASH_REGEX.test(src) || src.includes('/kf/'))) {
@@ -245,6 +268,7 @@ async function scrapePage() {
     });
     console.log(`[AliExpress Scraper] Description container scrape added up to ${descriptionImages.size} total.`);
   }
+
 
   // --- Step 3: Scroll back to where user was ---
   window.scrollTo(0, window.scrollY > 200 ? 0 : window.scrollY);
