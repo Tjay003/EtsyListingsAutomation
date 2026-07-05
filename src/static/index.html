@@ -16,7 +16,6 @@
         <!-- HEADER -->
         <header class="app-header">
             <div class="logo-container">
-                <!-- Geometric Developer Logo (No Emojis) -->
                 <svg class="logo-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <rect x="3" y="3" width="18" height="18" rx="2" fill="#181818"></rect>
                     <path d="M7 17l5-5-5-5" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -25,173 +24,148 @@
                 <span class="logo-text">listings.automation</span>
             </div>
             
+            <nav class="top-nav">
+                <button class="nav-btn active" data-target="panel-queue">Queue</button>
+                <button class="nav-btn" data-target="panel-workspace">Workspace</button>
+                <button class="nav-btn" data-target="panel-settings">Settings</button>
+            </nav>
+
             <div class="header-status">
                 <span class="status-dot"></span>
-                <span class="status-label">Workspace Active</span>
+                <span class="status-label">API Active</span>
             </div>
         </header>
 
         <!-- MAIN LAYOUT -->
         <main class="app-main">
             
-            <!-- LEFT PANEL: PIPELINE INPUTS & PROGRESS MONITOR -->
-            <section class="left-panel">
-                <div class="card panel-card">
-                    <h2 class="panel-title">
-                        <svg class="title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" y1="3" x2="12" y2="15"></line>
-                        </svg>
-                        Importer Control
-                    </h2>
-                    
-                    <div class="input-group">
-                        <label for="product-url" class="field-label">AliExpress URL</label>
-                        <input type="text" id="product-url" class="text-input" placeholder="https://www.aliexpress.com/item/...">
-                    </div>
-                    
-                    <div class="grid-2-col">
-                        <div class="input-group">
-                            <label for="theme-selector" class="field-label">Theme Preset</label>
-                            <select id="theme-selector" class="select-input">
-                                <!-- Themes loaded dynamically -->
-                            </select>
-                        </div>
-                        
-                        <div class="input-group">
-                            <label for="trigger-keyword" class="field-label">Product Trigger Keyword</label>
-                            <input type="text" id="trigger-keyword" class="text-input" value="product" placeholder="e.g. phone case">
+            <!-- QUEUE PANEL -->
+            <section id="panel-queue" class="main-panel active">
+                <div class="card full-height">
+                    <div class="panel-header-flex">
+                        <h2 class="panel-title">
+                            <svg class="title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+                            </svg>
+                            Scraped Products Queue
+                        </h2>
+                        <div class="header-actions">
+                            <button id="btn-refresh-queue" class="secondary-btn">Refresh</button>
+                            <button id="btn-export-selected" class="primary-btn" disabled>Export ZIP</button>
                         </div>
                     </div>
-
-                    <div class="input-group">
-                        <label for="preset-selector" class="field-label">Image Generation Preset</label>
-                        <select id="preset-selector" class="select-input">
-                            <option value="product_staging">Product Staging (No Models)</option>
-                            <option value="fashion_model">AI Fashion Models (With Humans)</option>
-                        </select>
-                    </div>
-
-                    <div class="input-group checkbox-group">
-                        <label class="checkbox-container">
-                            <input type="checkbox" id="headed-mode">
-                            <span class="checkmark"></span>
-                            <span class="checkbox-text">Run Headed Browser (solve captchas)</span>
-                        </label>
-                    </div>
                     
-                    <button id="btn-generate" class="primary-btn">
-                        <span>Execute Pipeline</span>
-                        <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                        </svg>
-                    </button>
-                </div>
-                
-                <!-- LIVE CONSOLE MONITOR -->
-                <div class="card console-card">
-                    <h3 class="console-title">
-                        <svg class="title-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="4 17 10 11 4 5"></polyline>
-                            <line x1="12" y1="19" x2="20" y2="19"></line>
-                        </svg>
-                        Execution Console
-                    </h3>
-                    <div id="console-logs" class="console-logs">
-                        <div class="log-entry system">Ready. Enter an AliExpress URL and click Execute.</div>
+                    <div class="queue-list" id="queue-list">
+                        <!-- Queue items populated by JS -->
                     </div>
                 </div>
             </section>
-            
-            <!-- RIGHT PANEL: LISTING PREVIEW EDITOR -->
-            <section class="right-panel">
-                <div class="card workspace-card">
-                    
-                    <div class="workspace-header">
-                        <h2 class="panel-title">
-                            <svg class="title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4z"></path>
-                            </svg>
-                            Etsy Listing Editor
-                        </h2>
-                        <button id="btn-save" class="secondary-btn" disabled>
-                            <span>Save Updates</span>
-                            <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                                <polyline points="7 3 7 8 15 8"></polyline>
-                            </svg>
-                        </button>
-                    </div>
-                    
-                    <!-- EDITABLE LISTING AREA -->
-                    <div id="listing-workspace" class="listing-workspace disabled">
+
+            <!-- WORKSPACE PANEL -->
+            <section id="panel-workspace" class="main-panel flex-panel">
+                
+                <!-- LEFT SIDE: EXECUTION & CONSOLE -->
+                <div class="left-panel" style="width: 350px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px;">
+                    <div class="card panel-card">
+                        <h2 class="panel-title">Pipeline Control</h2>
                         
                         <div class="input-group">
-                            <label for="etsy-title" class="field-label flex-between">
-                                <span>Optimized Etsy Title</span>
-                                <span id="title-char-count" class="char-indicator">0 / 140</span>
-                            </label>
-                            <input type="text" id="etsy-title" class="text-input font-bold" placeholder="Etsy Title" readonly>
+                            <label class="field-label">Selected Product</label>
+                            <input type="text" id="ws-product-title" class="text-input" readonly placeholder="No product selected">
+                            <input type="hidden" id="ws-product-slug">
+                        </div>
+                        
+                        <div class="input-group">
+                            <label class="field-label">Pipeline Mode</label>
+                            <select id="ws-pipeline-mode" class="select-input">
+                                <option value="listing_only">Listing Copy Only</option>
+                                <option value="listing_with_images">Listing Copy + AI Images</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="field-label">Theme Preset (For Images)</label>
+                            <select id="theme-selector" class="select-input"></select>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="field-label">Image Generation Preset</label>
+                            <select id="preset-selector" class="select-input">
+                                <option value="product_staging">Product Staging</option>
+                                <option value="fashion_model">Fashion Model</option>
+                            </select>
+                        </div>
+                        
+                        <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
+                    </div>
+
+                    <div class="card console-card">
+                        <h3 class="console-title">Console</h3>
+                        <div id="console-logs" class="console-logs"></div>
+                    </div>
+                </div>
+
+                <!-- RIGHT SIDE: EDITOR -->
+                <div class="right-panel card workspace-card" style="flex: 1;">
+                    <div class="workspace-header">
+                        <h2 class="panel-title">Etsy Listing Editor</h2>
+                        <button id="btn-save" class="secondary-btn" disabled>Save Updates</button>
+                    </div>
+                    
+                    <div id="listing-workspace" class="listing-workspace disabled">
+                        <div class="input-group">
+                            <label class="field-label">Optimized Etsy Title</label>
+                            <input type="text" id="etsy-title" class="text-input font-bold" readonly>
                         </div>
                         
                         <div class="grid-2-col">
                             <div class="input-group">
-                                <label for="etsy-price" class="field-label">Retail Suggested Price (USD)</label>
+                                <label class="field-label">Price</label>
                                 <div class="price-input-wrapper">
                                     <span class="currency-symbol">$</span>
-                                    <input type="text" id="etsy-price" class="text-input price-input" placeholder="0.00" readonly>
+                                    <input type="text" id="etsy-price" class="text-input price-input" readonly>
                                 </div>
                             </div>
-                            
                             <div class="input-group">
-                                <label class="field-label">Search tags (exactly 13)</label>
-                                <div id="tags-container" class="tags-container">
-                                    <!-- Dynamic tags -->
-                                </div>
+                                <label class="field-label">Tags</label>
+                                <div id="tags-container" class="tags-container"></div>
                             </div>
                         </div>
                         
                         <div class="workspace-split">
-                            <!-- Left: Description -->
                             <div class="input-group desc-group">
-                                <label for="etsy-desc" class="field-label">Structured Description & Return Policies</label>
-                                <textarea id="etsy-desc" class="textarea-input" placeholder="Write description here..." readonly></textarea>
+                                <label class="field-label">Description</label>
+                                <textarea id="etsy-desc" class="textarea-input" readonly></textarea>
                             </div>
-                            
-                            <!-- Right: Generated Images -->
                             <div class="images-group">
-                                <div class="images-group-header">
-                                    <label class="field-label">Fal.ai Image Generation Workspace</label>
-                                    <div class="button-group">
-                                        <button id="btn-add-slot" class="secondary-btn btn-sm" disabled>
-                                            <span>Add Slot</span>
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                                <line x1="12" y1="5" x2="12" y2="19"></line>
-                                                <line x1="5" y1="12" x2="19" y2="12"></line>
-                                            </svg>
-                                        </button>
-                                        <button id="btn-generate-all-images" class="secondary-btn btn-sm" disabled>
-                                            <span>Generate All</span>
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
+                                <label class="field-label">Generated Images</label>
                                 <div id="images-grid" class="images-grid vertical-stack">
-                                    <div class="image-placeholder">Execute the pipeline first to load image generation slots.</div>
+                                    <div class="image-placeholder">Run pipeline to generate images.</div>
                                 </div>
                             </div>
                         </div>
-
                     </div>
-                    
                 </div>
             </section>
-            
+
+            <!-- SETTINGS PANEL -->
+            <section id="panel-settings" class="main-panel hidden">
+                <div class="card" style="max-width: 600px; margin: 0 auto; width: 100%;">
+                    <h2 class="panel-title">Global Settings</h2>
+                    
+                    <div class="input-group">
+                        <label class="field-label">Local Output Directory</label>
+                        <input type="text" id="setting-output-dir" class="text-input" placeholder="C:\path\to\save\products">
+                        <small style="color: var(--neutral-grey); margin-top: 4px; display: block; font-size: 11px;">
+                            Where images, zips, and metadata are saved locally.
+                        </small>
+                    </div>
+                    
+                    <button id="btn-save-settings" class="primary-btn">Save Settings</button>
+                    <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Saved successfully!</div>
+                </div>
+            </section>
+
         </main>
     </div>
     <script src="app.js"></script>

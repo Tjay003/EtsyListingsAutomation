@@ -267,25 +267,32 @@ def parse_aliexpress_html(html_path, input_dir="inputs"):
         target_elements = soup.find_all("img")
         
     for img in target_elements:
-        src = img.get("src") or img.get("data-src") or img.get("lazy-src")
+        src = img.get("src") or img.get("data-src") or img.get("lazy-src") or img.get("data-src-zoom-image")
         if not src:
             continue
             
         clean_url = None
-        # Case A: Live CDN URL
-        if "alicdn.com" in src or "ae01" in src:
-            clean_url = re.sub(r'_\d+x\d+.*$', '', src)
-        # Case B: Local path
-        elif "_files/" in src or "bag_files/" in src or src.startswith("./"):
-            filename = os.path.basename(src)
-            match = re.search(r'(S[a-zA-Z0-9]{30,35})', filename)
-            if match:
-                key = match.group(1)
-                clean_url = f"https://ae01.alicdn.com/kf/{key}.jpg"
+        # Try to resolve as local path first if it's relative
+        if not src.startswith("http") and not src.startswith("//"):
+            unquoted_src = urllib.parse.unquote(src)
+            rel_path = unquoted_src.replace("./", "", 1) if unquoted_src.startswith("./") else unquoted_src
+            local_full_path = os.path.join(html_dir, rel_path)
+            if os.path.exists(local_full_path):
+                clean_url = local_full_path
+                
+        # If not a valid local path, resolve as CDN url
+        if not clean_url:
+            if "alicdn.com" in src or "ae01" in src:
+                clean_url = re.sub(r'_\d+x\d+.*$', '', src)
+                if clean_url.startswith("//"):
+                    clean_url = "https:" + clean_url
             else:
-                local_full_path = os.path.join(html_dir, src.lstrip("./"))
-                if os.path.exists(local_full_path):
-                    clean_url = local_full_path
+                # Try to extract standard AliExpress S-hash key from filename
+                filename = os.path.basename(src)
+                match = re.search(r'(S[a-zA-Z0-9]{30,35})', filename)
+                if match:
+                    key = match.group(1)
+                    clean_url = f"https://ae01.alicdn.com/kf/{key}.jpg"
                     
         if clean_url and clean_url not in image_urls:
             image_urls.append(clean_url)
