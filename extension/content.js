@@ -163,6 +163,13 @@ async function scrapePage() {
   // Helper to extract text contents recursively, including traversing open shadow roots
   const getDeepTextContent = (node) => {
     if (!node) return "";
+    
+    // Skip style, script, and noscript elements to avoid scraping CSS/JS code
+    const tagName = (node.tagName || node.nodeName || "").toUpperCase();
+    if (["STYLE", "SCRIPT", "NOSCRIPT"].includes(tagName)) {
+      return "";
+    }
+
     let text = "";
     
     if (node.shadowRoot) {
@@ -184,6 +191,17 @@ async function scrapePage() {
   };
 
   // 4. Scrape Specifications & Details (handle wildcard prefix class names)
+  // Auto-expand specifications by clicking "View more" if present
+  const specBtn = document.querySelector('[class*="specification--btn--"]');
+  if (specBtn) {
+    const btnText = (specBtn.innerText || "").toLowerCase();
+    if (btnText.includes("more")) {
+      console.log('[AliExpress Scraper] Clicking specifications View more button...');
+      specBtn.click();
+      await new Promise(resolve => setTimeout(resolve, 600)); // Wait for expand transition
+    }
+  }
+
   const specsObj = {};
   const propContainers = document.querySelectorAll('[class*="specification--prop--"], .product-prop');
   propContainers.forEach(container => {
@@ -202,7 +220,12 @@ async function scrapePage() {
   const descContainer = document.querySelector('[class*="description--product-description--"], [data-pl="product-description"], #product-description, .product-description, #desc-lazyload-container, .detail-desc-decorate-richtext');
   let descText = "";
   if (descContainer) {
-    descText = getDeepTextContent(descContainer).replace(/\s+/g, " ").trim();
+    const rawDesc = getDeepTextContent(descContainer);
+    // Remove leftover variable leakage like window.adminAccountId=...
+    descText = rawDesc
+      .replace(/window\.adminAccountId\s*=\s*\d+;/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
 
