@@ -1,3 +1,10 @@
+// Helper to extract productId from AliExpress product detail URLs
+function getProductIdFromUrl(url) {
+  if (!url) return null;
+  const match = url.match(/\/item\/(\d+)\.html/i);
+  return match ? match[1] : null;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   // Tabs navigation elements
   const tabBtnGen = document.getElementById("tab-btn-generator");
@@ -95,6 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (tabs && tabs.length > 0) {
       const activeTab = tabs[0];
       if (activeTab.url && (activeTab.url.includes("aliexpress.com") || activeTab.url.includes("aliexpress.us"))) {
+        const productId = getProductIdFromUrl(activeTab.url);
         
         // Inject content script if not already loaded
         try {
@@ -116,9 +124,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             updateBadge(badgeMain, response.counts.main);
             updateBadge(badgeVariation, response.counts.variation);
 
-            // ALSO ask background for intercepted description images
-            // (these are cached from the XHR intercept and NOT visible in the DOM yet)
-            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id }, (bgRes) => {
+            // ALSO ask background for intercepted description images (validating matching productId)
+            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, productId: productId }, (bgRes) => {
               const bgDescCount = (bgRes && bgRes.images) ? bgRes.images.length : 0;
               const domDescCount = response.counts.description;
               const totalDesc = Math.max(bgDescCount, domDescCount);
@@ -182,8 +189,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         showStatus("Retrieving intercepted description images...");
         let interceptedDescImages = [];
         try {
+          const productId = getProductIdFromUrl(activeTab.url);
           interceptedDescImages = await new Promise((resolve) => {
-            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id }, (res) => {
+            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, productId: productId }, (res) => {
               if (chrome.runtime.lastError) { resolve([]); return; }
               resolve((res && res.images) ? res.images : []);
             });
@@ -192,6 +200,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         } catch(e) {
           console.error("Background image fetch failed:", e);
         }
+
 
         // Merge: content script DOM images + background intercepted images, minus main/variation
         const mainSet = new Set(scrapedData.main_images);

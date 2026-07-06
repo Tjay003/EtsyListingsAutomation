@@ -8,11 +8,26 @@
 // ==========================================
 // INTERCEPT DESCRIPTION IMAGES VIA webRequest
 // ==========================================
-chrome.webRequest.onCompleted.addListener(
+// Helper to extract productId from AliExpress description URLs
+function getProductIdFromDescUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    return url.searchParams.get("productId");
+  } catch (e) {
+    return null;
+  }
+}
+
+// ==========================================
+// INTERCEPT DESCRIPTION IMAGES VIA webRequest.onBeforeRequest
+// ==========================================
+// Listening on BeforeRequest is more robust than onCompleted, especially for cached assets.
+chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (!details.url) return;
     const url = details.url;
 
+    // Filter for description endpoints
     const isDescUrl = (
       url.includes('desc.htm') ||
       url.includes('descriptionModule') ||
@@ -35,7 +50,24 @@ chrome.webRequest.onCompleted.addListener(
       }
     } catch(e) {}
 
-    console.log(`[Background] Fetching description from: ${realDescUrl} for tab ${tabId}`);
+    // ===== CORS & SECURITY FIX =====
+    // Ensure we only fetch domains belonging to AliExpress / AliCDN to prevent CORS errors on third-party trackers (like clientgear.com)
+    try {
+      const hostname = new URL(realDescUrl).hostname;
+      const isAllowedDomain = (
+        hostname.endsWith('aliexpress.com') ||
+        hostname.endsWith('aliexpress.us') ||
+        hostname.endsWith('alicdn.com')
+      );
+      if (!isAllowedDomain) {
+        console.log(`[Background] Skipping fetch for unauthorized domain: ${hostname}`);
+        return;
+      }
+    } catch(e) {
+      return;
+    }
+
+    console.log(`[Background] Intercepted description URL: ${realDescUrl} for tab ${tabId}`);
 
     fetch(realDescUrl, {
       headers: {
@@ -46,11 +78,10 @@ chrome.webRequest.onCompleted.addListener(
       }
     })
     .then(res => {
-      console.log(`[Background] Desc fetch status: ${res.status}, type: ${res.headers.get('content-type')}`);
+      console.log(`[Background] Desc fetch status: ${res.status}`);
       return res.text();
     })
     .then(html => {
-      console.log(`[Background] Desc response length: ${html.length} chars. Sample: ${html.substring(0, 150)}`);
       const regex = /(?:https?:)?\/\/[^\s"'<>]*alicdn\.com[^\s"'<>]*\/kf\/[a-zA-Z0-9_]+\.(?:jpg|png|jpeg|webp)/gi;
       const images = new Set();
       let m;
@@ -62,15 +93,34 @@ chrome.webRequest.onCompleted.addListener(
         images.add(imgUrl);
       }
       const imgArray = Array.from(images);
-      console.log(`[Background] Saving ${imgArray.length} description images to storage for tab ${tabId}`);
+      const productId = getProductIdFromDescUrl(realDescUrl);
 
-      // Use chrome.storage.session — persists across service worker restarts within session
-      const cacheKey = `desc_${tabId}`;
-      chrome.storage.session.get([cacheKey], (existing) => {
-        const prev = new Set(existing[cacheKey] || []);
-        imgArray.forEach(img => prev.add(img));
-        chrome.storage.session.set({ [cacheKey]: Array.from(prev) });
-      });
+      console.log(`[Background] Intercepted ${imgArray.length} images for productId: ${productId} on tab ${tabId}`);
+
+      if (imgArray.length > 0 && productId) {
+        const cacheKey = `desc_${tabId}`;
+        chrome.storage.session.get([cacheKey], (existing) => {
+          const cacheData = existing[cacheKey] || {};
+          let mergedImages = new Set();
+          
+          // If it's the same product ID, merge images. Otherwise, overwrite with new product.
+          if (cacheData.productId === productId) {
+            mergedImages = new Set([...(cacheData.images || []), ...imgArray]);
+          } else {
+            mergedImages = new Set(imgArray);
+          }
+
+          chrome.storage.session.set({
+            [cacheKey]: {
+              productId: productId,
+              images: Array.from(mergedImages),
+              timestamp: Date.now()
+            }
+          }, () => {
+            console.log(`[Background] Saved ${mergedImages.size} description images in storage for productId: ${productId}`);
+          });
+        });
+      }
     })
     .catch(err => {
       console.error(`[Background] Failed to fetch desc URL: ${err.message}`);
@@ -86,15 +136,14 @@ chrome.webRequest.onCompleted.addListener(
   }
 );
 
-// Clean up storage when tab navigates or closes
+// Clean up storage when tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(`desc_${tabId}`);
 });
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading') {
-    chrome.storage.session.remove(`desc_${tabId}`);
-  }
-});
+
+// Note: Removed chrome.tabs.onUpdated listener. 
+// We no longer clear the cache on tab update status === 'loading' to prevent 
+// race-condition wipes when sub-resources load. Stale cache is handled via productId checking.
 
 // ==========================================
 // MESSAGE HANDLER
@@ -103,11 +152,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "get_desc_images") {
     const tabId = request.tabId;
+    const requestProductId = request.productId;
     const cacheKey = `desc_${tabId}`;
+
     chrome.storage.session.get([cacheKey], (result) => {
-      const images = result[cacheKey] || [];
-      console.log(`[Background] Popup requested desc images for tab ${tabId}. Returning ${images.length} images.`);
-      sendResponse({ images });
+      const cacheData = result[cacheKey] || {};
+      
+      // Verification check: Only return cache if the requested productId matches the cached one
+      if (cacheData.images && cacheData.images.length > 0) {
+        if (!requestProductId || cacheData.productId === requestProductId) {
+          console.log(`[Background] Cache MATCH: Returning ${cacheData.images.length} images for productId: ${requestProductId}`);
+          sendResponse({ images: cacheData.images });
+          return;
+        } else {
+          console.log(`[Background] Cache STALE: Requested ${requestProductId}, cached ${cacheData.productId}. Returning [].`);
+        }
+      }
+      sendResponse({ images: [] });
     });
     return true; // Keep message channel open for async storage read
   }
@@ -122,4 +183,5 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
 
