@@ -5,9 +5,6 @@
 // get wiped every time Chrome kills and restarts the service worker.
 // We use chrome.storage.session to persist the cache across restarts.
 
-// ==========================================
-// INTERCEPT DESCRIPTION IMAGES VIA webRequest
-// ==========================================
 // Helper to extract productId from AliExpress description URLs
 function getProductIdFromDescUrl(urlStr) {
   try {
@@ -19,10 +16,11 @@ function getProductIdFromDescUrl(urlStr) {
 }
 
 // ==========================================
-// INTERCEPT DESCRIPTION IMAGES VIA webRequest.onBeforeRequest
+// INTERCEPT DESCRIPTION IMAGES VIA webRequest.onCompleted
 // ==========================================
-// Listening on BeforeRequest is more robust than onCompleted, especially for cached assets.
-chrome.webRequest.onBeforeRequest.addListener(
+// Using onCompleted ensures cookies and TLS session are fully active, preventing status 500 errors.
+
+chrome.webRequest.onCompleted.addListener(
   (details) => {
     if (!details.url) return;
     const url = details.url;
@@ -32,12 +30,12 @@ chrome.webRequest.onBeforeRequest.addListener(
       url.includes('desc.htm') ||
       url.includes('descriptionModule') ||
       url.includes('/desc/') ||
-      (url.includes('alicdn.com') && url.includes('description')) ||
-      (url.includes('fourier.aliexpress') && url.includes('desc'))
+      (url.includes('alicdn.com') && url.includes('description'))
     );
     if (!isDescUrl) return;
 
     const tabId = details.tabId;
+    if (tabId === -1) return; // Skip background/telemetry frame requests
 
     // AliExpress wraps the real URL inside fourier.aliexpress.com/ts?url=ENCODED_REAL_URL
     let realDescUrl = url;
@@ -51,7 +49,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     } catch(e) {}
 
     // ===== CORS & SECURITY FIX =====
-    // Ensure we only fetch domains belonging to AliExpress / AliCDN to prevent CORS errors on third-party trackers (like clientgear.com)
+    // Ensure we only fetch domains belonging to AliExpress / AliCDN to prevent CORS errors on third-party trackers
     try {
       const hostname = new URL(realDescUrl).hostname;
       const isAllowedDomain = (
@@ -79,6 +77,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     })
     .then(res => {
       console.log(`[Background] Desc fetch status: ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.text();
     })
     .then(html => {
@@ -103,7 +102,6 @@ chrome.webRequest.onBeforeRequest.addListener(
           const cacheData = existing[cacheKey] || {};
           let mergedImages = new Set();
           
-          // If it's the same product ID, merge images. Otherwise, overwrite with new product.
           if (cacheData.productId === productId) {
             mergedImages = new Set([...(cacheData.images || []), ...imgArray]);
           } else {
@@ -130,11 +128,11 @@ chrome.webRequest.onBeforeRequest.addListener(
     urls: [
       "https://*.alicdn.com/*desc*",
       "https://*.aliexpress.com/*desc*",
-      "https://*.aliexpress.us/*desc*",
-      "https://fourier.aliexpress.com/*"
+      "https://*.aliexpress.us/*desc*"
     ]
   }
 );
+
 
 // Clean up storage when tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
