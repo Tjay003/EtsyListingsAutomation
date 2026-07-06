@@ -229,59 +229,9 @@ async function scrapePage() {
   }
 
 
-  // ==========================================
-  // FETCH HIDDEN DESCRIPTION IMAGES
-  // ==========================================
-  // Step 1 (global window.runParams extraction) is handled by popup.js using
-  // chrome.scripting.executeScript({world:"MAIN"}) which bypasses AliExpress's CSP.
-  // content.js handles Step 2: targeted description container expand + scrape.
-  console.log('[AliExpress Scraper] Starting targeted description container scrape...');
-
-  // --- Step 2: Click ONLY the description section's "View More" button ---
-  // Target the known AliExpress description container and look for a button INSIDE it only.
-  const DESC_CONTAINER_SELECTORS = [
-    '#product-description',
-    '#desc-lazyload-container',
-    '.detail-desc-decorate-richtext',
-    '.product-description',
-    '.description--product-description'
-  ];
-  let descImgContainer = null;
-  for (const sel of DESC_CONTAINER_SELECTORS) {
-    descImgContainer = document.querySelector(sel);
-    if (descImgContainer) break;
-  }
-
-  if (descImgContainer) {
-    // Only scroll to and click buttons INSIDE the description container
-    descImgContainer.scrollIntoView({ behavior: 'auto' });
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const innerBtns = descImgContainer.querySelectorAll('button, [role="button"], .more-btn, .show-more, .view-more');
-    for (const btn of innerBtns) {
-      const text = (btn.innerText || '').toLowerCase();
-      if (text.includes('more') || btn.className.toLowerCase().includes('more')) {
-        console.log('[AliExpress Scraper] Clicking description View More button...');
-        btn.click();
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-
-    // Also look for AliExpress's specific expand trigger which is often a div overlay
-    const expandTriggers = descImgContainer.querySelectorAll('[class*="more"], [class*="expand"], [class*="unfold"]');
-    for (const trigger of expandTriggers) {
-      if (trigger.clientHeight > 0 && trigger.clientHeight < 60) {
-        console.log('[AliExpress Scraper] Clicking expand trigger:', trigger.className);
-        trigger.click();
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-
-    // Wait for images to lazy-load after clicking
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // Scrape images from the description container specifically (including shadow DOM if present)
-    const rootNode = descImgContainer.shadowRoot || descImgContainer;
+  // Extract description images from DOM (including shadow DOM if present) silently without scrolling or clicking
+  if (descContainer) {
+    const rootNode = descContainer.shadowRoot || descContainer;
     const descImgs = rootNode.querySelectorAll('img');
     descImgs.forEach(img => {
       const src = img.src || img.getAttribute('data-src') || img.getAttribute('lazy-src') || img.getAttribute('data-lazy-src');
@@ -289,12 +239,8 @@ async function scrapePage() {
         descriptionImages.add(cleanImageURL(src));
       }
     });
-    console.log(`[AliExpress Scraper] Description container scrape added up to ${descriptionImages.size} total.`);
   }
 
-
-  // --- Step 3: Scroll back to where user was ---
-  window.scrollTo(0, window.scrollY > 200 ? 0 : window.scrollY);
 
   return {
     title: title,

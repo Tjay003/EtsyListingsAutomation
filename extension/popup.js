@@ -124,8 +124,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             updateBadge(badgeMain, response.counts.main);
             updateBadge(badgeVariation, response.counts.variation);
 
-            // ALSO ask background for intercepted description images (validating matching productId)
-            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, productId: productId }, (bgRes) => {
+            // ALSO ask background for intercepted description images (validating matching tabUrl)
+            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, tabUrl: activeTab.url }, (bgRes) => {
               const bgDescCount = (bgRes && bgRes.images) ? bgRes.images.length : 0;
               const domDescCount = response.counts.description;
               const totalDesc = Math.max(bgDescCount, domDescCount);
@@ -189,9 +189,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         showStatus("Retrieving intercepted description images...");
         let interceptedDescImages = [];
         try {
-          const productId = getProductIdFromUrl(activeTab.url);
           interceptedDescImages = await new Promise((resolve) => {
-            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, productId: productId }, (res) => {
+            chrome.runtime.sendMessage({ action: "get_desc_images", tabId: activeTab.id, tabUrl: activeTab.url }, (res) => {
               if (chrome.runtime.lastError) { resolve([]); return; }
               resolve((res && res.images) ? res.images : []);
             });
