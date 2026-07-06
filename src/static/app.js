@@ -140,7 +140,11 @@ document.addEventListener("DOMContentLoaded", () => {
             const statusBadge = document.createElement("span");
             const status = item.status || "queued";
             statusBadge.className = `queue-status status-${status}`;
-            statusBadge.textContent = status;
+            if (status === "downloading" && item.download_progress) {
+                statusBadge.textContent = `downloading (${item.download_progress})`;
+            } else {
+                statusBadge.textContent = status;
+            }
             
             const imgCount = (item.main_images?.length || 0) + (item.variation_images?.length || 0) + (item.description_images?.length || 0);
             const countLabel = document.createElement("span");
@@ -158,12 +162,56 @@ document.addEventListener("DOMContentLoaded", () => {
             
             const btnOpen = document.createElement("button");
             btnOpen.className = "secondary-btn";
-            btnOpen.textContent = "Open in Workspace";
-            btnOpen.addEventListener("click", () => {
-                selectForWorkspace(item);
-            });
+            if (status === "downloading") {
+                btnOpen.textContent = "Downloading...";
+                btnOpen.disabled = true;
+            } else {
+                btnOpen.textContent = "Open in Workspace";
+                btnOpen.disabled = false;
+                btnOpen.addEventListener("click", () => {
+                    selectForWorkspace(item);
+                });
+            }
+            
+            const btnDelete = document.createElement("button");
+            btnDelete.className = "danger-btn";
+            btnDelete.textContent = "Delete";
+            if (status === "downloading") {
+                btnDelete.disabled = true;
+            } else {
+                btnDelete.disabled = false;
+                btnDelete.addEventListener("click", () => {
+                    if (confirm(`Are you sure you want to delete "${item.title}"?`)) {
+                        btnDelete.disabled = true;
+                        btnDelete.textContent = "Deleting...";
+                        fetch("/api/delete-queue-item", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ slug: item.slug })
+                        })
+                        .then(r => r.json())
+                        .then(res => {
+                            if (res.status === "success") {
+                                loadQueue();
+                            } else {
+                                alert(res.detail || "Failed to delete item.");
+                                btnDelete.disabled = false;
+                                btnDelete.textContent = "Delete";
+                            }
+                        })
+                        .catch(err => {
+                            alert("Error: " + err.message);
+                            btnDelete.disabled = false;
+                            btnDelete.textContent = "Delete";
+                        });
+                    }
+                });
+            }
             
             actions.appendChild(btnOpen);
+            actions.appendChild(btnDelete);
+
+
 
             row.appendChild(chk);
             row.appendChild(thumb);

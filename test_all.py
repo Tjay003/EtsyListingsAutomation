@@ -7,7 +7,8 @@ from src.image_gen import load_themes, roll_theme_prompts, generate_prompts_from
 
 class TestEtsyAutomationLogic(unittest.TestCase):
 
-    def test_tag_cleaning_and_limit(self):
+    @unittest.mock.patch("src.ai_helper.get_openai_client", return_value=None)
+    def test_tag_cleaning_and_limit(self, mock_get_openai):
         """Test that tags are cleaned, limited to 13, and tags > 20 characters are condensed."""
         # Create a mock Gemini client
         mock_client = MagicMock()
@@ -37,6 +38,7 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         # Verify the mock client was called to condense the long tag
         mock_client.models.generate_content.assert_called_once()
         self.assertIn("vintage aesthetic", cleaned)
+
 
     def test_policy_footer_injection(self):
         """Test that cancellation and return policies are automatically appended."""

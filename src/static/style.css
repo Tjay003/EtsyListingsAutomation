@@ -252,22 +252,30 @@ body {
 }
 
 .queue-status {
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
+    border: 1.5px solid var(--border-color);
 }
 
-.status-queued { background: #e0e0e0; color: #555; }
-.status-processing { background: #4FB3E8; color: #fff; }
-.status-done { background: #45D070; color: #fff; }
+.status-queued { background: #E5E5E0; color: var(--primary); }
+.status-downloading { background: #F2C94C; color: var(--primary); }
+.status-processing { background: #2A64D4; color: #fff; }
+.status-done { background: #27AE60; color: #fff; }
 .status-failed { background: var(--accent-red); color: #fff; }
 
 .queue-actions {
     display: flex;
     gap: 8px;
 }
+
+.queue-actions button {
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+}
+
 
 /* INPUTS & CONTROLS */
 .input-group {
@@ -375,6 +383,42 @@ body {
     transform: translate(-1px, -1px);
     box-shadow: 3px 3px 0px var(--primary);
 }
+
+.danger-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: var(--font-stack);
+    font-size: 13px;
+    font-weight: 700;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+    outline: none;
+    padding: 12px 20px;
+    background-color: var(--accent-red);
+    color: #FFFFFF;
+    box-shadow: 2px 2px 0px var(--primary);
+}
+
+.danger-btn:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px var(--primary);
+}
+
+.danger-btn:active:not(:disabled) {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0px var(--primary);
+}
+
+.danger-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
 
 /* CONSOLE MONITOR */
 .console-card {

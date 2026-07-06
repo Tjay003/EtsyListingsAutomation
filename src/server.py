@@ -161,6 +161,13 @@ def background_queue_product(req_data: dict):
             
         streamer.publish({"status": "progress", "message": f"Downloading assets for: {title[:30]}..."})
 
+        # Calculate total images to download
+        main_list = req_data.get("main_images") or []
+        var_list = req_data.get("variation_images") or []
+        desc_list = req_data.get("description_images") or []
+        total_assets = len(main_list) + len(var_list) + len(desc_list)
+        downloaded_assets = 0
+
         # Save metadata immediately so it shows up in queue
         meta_path = os.path.join(product_dir, "metadata.json")
         metadata = {
@@ -171,13 +178,24 @@ def background_queue_product(req_data: dict):
             "main_images": [],
             "variation_images": [],
             "description_images": [],
-            "status": "queued"
+            "status": "downloading",
+            "download_progress": f"0/{total_assets}"
         }
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
+        streamer.publish({"status": "queue_updated"})
+
+        # Helper to update progress inside loop
+        def report_progress():
+            nonlocal downloaded_assets
+            downloaded_assets += 1
+            metadata["download_progress"] = f"{downloaded_assets}/{total_assets}"
+            with open(meta_path, "w", encoding="utf-8") as fm:
+                json.dump(metadata, fm, indent=4, ensure_ascii=False)
+            streamer.publish({"status": "queue_updated"})
 
         # Download Main Images
-        for idx, img_url in enumerate(req_data.get("main_images", [])):
+        for idx, img_url in enumerate(main_list):
             ext = ".jpg"
             for possible_ext in [".png", ".jpeg", ".webp"]:
                 if possible_ext in img_url.lower(): ext = possible_ext
@@ -185,9 +203,10 @@ def background_queue_product(req_data: dict):
             dest = os.path.join(dirs["main_images"], filename)
             if download_image(img_url, dest):
                 metadata["main_images"].append(f"main_images/{filename}")
+            report_progress()
 
         # Download Variation Images
-        for idx, img_url in enumerate(req_data.get("variation_images", [])):
+        for idx, img_url in enumerate(var_list):
             ext = ".jpg"
             for possible_ext in [".png", ".jpeg", ".webp"]:
                 if possible_ext in img_url.lower(): ext = possible_ext
@@ -195,9 +214,10 @@ def background_queue_product(req_data: dict):
             dest = os.path.join(dirs["variation_images"], filename)
             if download_image(img_url, dest):
                 metadata["variation_images"].append(f"variation_images/{filename}")
+            report_progress()
 
         # Download Description Images
-        for idx, img_url in enumerate(req_data.get("description_images", [])):
+        for idx, img_url in enumerate(desc_list):
             ext = ".jpg"
             for possible_ext in [".png", ".jpeg", ".webp"]:
                 if possible_ext in img_url.lower(): ext = possible_ext
@@ -205,14 +225,20 @@ def background_queue_product(req_data: dict):
             dest = os.path.join(dirs["description_images"], filename)
             if download_image(img_url, dest):
                 metadata["description_images"].append(f"description_images/{filename}")
+            report_progress()
 
-        # Save updated metadata with local paths
+        # Save final metadata with local paths and update status to queued
+        metadata["status"] = "queued"
+        if "download_progress" in metadata:
+            del metadata["download_progress"]
+            
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
 
         streamer.publish({"status": "progress", "message": f"Finished downloading: {title[:30]}"})
-        # Broadcast queue update
+        # Broadcast final queue update
         streamer.publish({"status": "queue_updated"})
+
 
     except Exception as e:
         streamer.publish({"status": "error", "message": f"Queue error: {str(e)}"})
@@ -258,6 +284,25 @@ def list_queue():
                 except Exception:
                     pass
     return {"queue": products}
+
+@app.post("/api/delete-queue-item")
+def delete_queue_item(payload: dict):
+    slug = payload.get("slug")
+    if not slug:
+        raise HTTPException(status_code=400, detail="Missing slug")
+    
+    out_root = get_output_dir()
+    product_dir = os.path.join(out_root, slug)
+    if os.path.exists(product_dir) and os.path.isdir(product_dir):
+        try:
+            shutil.rmtree(product_dir)
+            streamer.publish({"status": "queue_updated"})
+            return {"status": "success", "message": "Product deleted successfully"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete product: {str(e)}")
+    else:
+        raise HTTPException(status_code=404, detail="Product not found")
+
 
 @app.get("/api/product-image/{slug}/{image_path:path}")
 def serve_product_image(slug: str, image_path: str):
