@@ -55,7 +55,8 @@ chrome.webRequest.onCompleted.addListener(
       const isAllowedDomain = (
         hostname.endsWith('aliexpress.com') ||
         hostname.endsWith('aliexpress.us') ||
-        hostname.endsWith('alicdn.com')
+        hostname.endsWith('alicdn.com') ||
+        hostname.endsWith('aliexpress-media.com')
       );
       if (!isAllowedDomain) {
         console.log(`[Background] Skipping fetch for unauthorized domain: ${hostname}`);
