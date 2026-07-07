@@ -223,6 +223,7 @@ body {
     border-radius: 8px;
     background: var(--bg-canvas);
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .queue-item:hover {
@@ -681,7 +682,6 @@ body {
     margin-left: 4px;
 }
 
-/* COMPLETED QUEUE ITEM WRAPPER */
 .queue-item-wrapper {
     display: flex;
     flex-direction: column;
@@ -690,6 +690,7 @@ body {
     background: var(--bg-canvas);
     transition: all 0.2s;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 .queue-item-wrapper:hover {
