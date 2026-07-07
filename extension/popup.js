@@ -203,7 +203,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // Merge: content script DOM images + background intercepted images, minus main/variation
         const mainSet = new Set(scrapedData.main_images);
-        const varSet = new Set(scrapedData.variation_images);
+        const varSet = new Set(scrapedData.variation_images.map(v => typeof v === "object" ? v.url : v));
         const descriptionSet = new Set(scrapedData.description_images);
 
         interceptedDescImages.forEach(img => {

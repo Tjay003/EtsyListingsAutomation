@@ -111,7 +111,7 @@ async function scrapePage() {
   ];
 
   const mainImages = new Set();
-  const variationImages = new Set();
+  const variationImagesMap = new Map();
   const descriptionImages = new Set();
 
   const allImgs = document.querySelectorAll("img");
@@ -152,7 +152,11 @@ async function scrapePage() {
     let cleanUrl = cleanImageURL(src);
 
     if (VARIATION_CLASSES.some(c => chain.includes(c))) {
-      variationImages.add(cleanUrl);
+      variationImagesMap.set(cleanUrl, {
+        url: cleanUrl,
+        alt: (img.alt || img.title || "").trim(),
+        title: (img.title || img.alt || "").trim()
+      });
     } else if (MAIN_CLASSES.some(c => chain.includes(c))) {
       mainImages.add(cleanUrl);
     } else if (DESCRIPTION_CLASSES.some(c => chain.includes(c))) {
@@ -246,7 +250,7 @@ async function scrapePage() {
     title: title,
     price: price,
     main_images: Array.from(mainImages),
-    variation_images: Array.from(variationImages),
+    variation_images: Array.from(variationImagesMap.values()),
     description_images: Array.from(descriptionImages),
     specs: specsObj,
     description_text: descText

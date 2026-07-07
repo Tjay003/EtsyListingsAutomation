@@ -42,12 +42,19 @@ chrome.webRequest.onCompleted.addListener(
       url.includes('desc.htm') ||
       url.includes('descriptionModule') ||
       url.includes('/desc/') ||
-      (url.includes('alicdn.com') && url.includes('description'))
+      url.includes('description') ||
+      url.includes('fourier')
     );
-    if (!isDescUrl) return;
+    if (!isDescUrl) {
+      console.log(`[Background] Request skipped: Not a description or fourier URL: ${url}`);
+      return;
+    }
 
     const tabId = details.tabId;
-    if (tabId === -1) return;
+    if (tabId === -1) {
+      console.log(`[Background] Request skipped: No valid tabId (-1) for URL: ${url}`);
+      return;
+    }
 
     // Decouple Fourier wrapper URL if present
     let realDescUrl = url;
@@ -56,8 +63,11 @@ chrome.webRequest.onCompleted.addListener(
       const innerUrl = parsedUrl.searchParams.get('url');
       if (innerUrl) {
         realDescUrl = decodeURIComponent(innerUrl);
+        console.log(`[Background] Decoupled fourier URL to: ${realDescUrl}`);
       }
-    } catch(e) {}
+    } catch(e) {
+      console.warn(`[Background] Failed to parse Fourier search params: ${e.message}`);
+    }
 
     // Ensure we only fetch domains belonging to AliExpress / AliCDN to prevent CORS errors on third-party trackers
     try {
@@ -68,8 +78,12 @@ chrome.webRequest.onCompleted.addListener(
         hostname.endsWith('alicdn.com') ||
         hostname.endsWith('aliexpress-media.com')
       );
-      if (!isAllowedDomain) return;
+      if (!isAllowedDomain) {
+        console.log(`[Background] Request skipped: Hostname ${hostname} is not in allowed domains for URL: ${realDescUrl}`);
+        return;
+      }
     } catch(e) {
+      console.error(`[Background] Request skipped: Invalid URL format: ${realDescUrl}`);
       return;
     }
 
@@ -77,8 +91,16 @@ chrome.webRequest.onCompleted.addListener(
 
     // Read the active tab's URL to store in cache
     chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab || !tab.url) return;
+      if (chrome.runtime.lastError) {
+        console.error(`[Background] chrome.tabs.get failed: ${chrome.runtime.lastError.message}`);
+        return;
+      }
+      if (!tab || !tab.url) {
+        console.warn(`[Background] Tab not found or has no URL for tab ID: ${tabId}`);
+        return;
+      }
       const cleanTabUrl = getCleanUrlPath(tab.url);
+      console.log(`[Background] Fetching description HTML from: ${realDescUrl} (active tab: ${cleanTabUrl})...`);
 
       fetch(realDescUrl, {
         headers: {
@@ -89,21 +111,27 @@ chrome.webRequest.onCompleted.addListener(
         }
       })
       .then(res => {
+        console.log(`[Background] Fetch response status: ${res.status} for URL: ${realDescUrl}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
       })
       .then(html => {
-        const regex = /(?:https?:)?\/\/[^\s"'<>]*alicdn\.com[^\s"'<>]*\/kf\/[a-zA-Z0-9_]+\.(?:jpg|png|jpeg|webp)/gi;
+        console.log(`[Background] Successfully fetched ${html.length} chars of HTML. Parsing images...`);
+        
+        // Broader regex matching both alicdn.com and aliexpress-media.com with optional file extension
+        const regex = /(?:https?:)?\/\/[^\s"'<>]*?(?:alicdn\.com|aliexpress-media\.com)[^\s"'<>]*?\/kf\/[a-zA-Z0-9_-]+(?:\.(?:jpg|png|jpeg|webp))?/gi;
         const images = new Set();
         let m;
         while ((m = regex.exec(html)) !== null) {
           let imgUrl = m[0];
+          // Clean size specifiers if present
           imgUrl = imgUrl.replace(/_\d+x\d+[^.]*\.(jpg|png|jpeg|webp)/, '.$1')
                          .replace(/_.webp$/, '');
           if (imgUrl.startsWith('//')) imgUrl = 'https:' + imgUrl;
           images.add(imgUrl);
         }
         const imgArray = Array.from(images);
+        console.log(`[Background] Parsed ${imgArray.length} unique description images from HTML.`);
 
         if (imgArray.length > 0) {
           const cacheKey = `desc_${tabId}`;
@@ -125,21 +153,27 @@ chrome.webRequest.onCompleted.addListener(
                 timestamp: Date.now()
               }
             }, () => {
-              console.log(`[Background] Saved ${mergedImages.size} description images in storage for tabUrl: ${cleanTabUrl}`);
+              console.log(`[Background] Cached ${mergedImages.size} description images in session storage for ${cleanTabUrl}`);
             });
           });
+        } else {
+          console.warn(`[Background] No matching description images found in HTML matching the regex.`);
         }
       })
       .catch(err => {
-        console.error(`[Background] Failed to fetch desc URL: ${err.message}`);
+        console.error(`[Background] Error fetching/parsing description: ${err.message}`);
       });
     });
   },
   {
     urls: [
-      "https://*.alicdn.com/*desc*",
-      "https://*.aliexpress.com/*desc*",
-      "https://*.aliexpress.us/*desc*"
+      "*://*.alicdn.com/*desc*",
+      "*://*.alicdn.com/*description*",
+      "*://*.aliexpress.com/*desc*",
+      "*://*.aliexpress.com/*description*",
+      "*://*.aliexpress.us/*desc*",
+      "*://*.aliexpress.us/*description*",
+      "*://fourier.aliexpress.com/*"
     ]
   }
 );

@@ -30,14 +30,34 @@
                 <button class="nav-btn" data-target="panel-settings">Settings</button>
             </nav>
 
-            <div class="header-status">
-                <span class="status-dot"></span>
-                <span class="status-label">API Active</span>
+            <div class="header-right">
+                <div class="header-status">
+                    <span class="status-dot"></span>
+                    <span class="status-label">API Active</span>
+                </div>
+                <!-- Console Toggle Button -->
+                <button id="btn-toggle-console" class="console-toggle-btn" title="Toggle Console">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="4 17 10 11 4 5"></polyline>
+                        <line x1="12" y1="19" x2="20" y2="19"></line>
+                    </svg>
+                    <span>Console</span>
+                    <span id="console-activity-dot" class="console-activity-dot"></span>
+                </button>
             </div>
         </header>
 
+        <!-- GLOBAL CONSOLE SIDEBAR -->
+        <aside id="console-sidebar" class="console-sidebar">
+            <div class="console-sidebar-header">
+                <h3 class="console-title">Console</h3>
+                <button id="btn-clear-console" class="console-clear-btn" title="Clear logs">Clear</button>
+            </div>
+            <div id="console-logs" class="console-logs"></div>
+        </aside>
+
         <!-- MAIN LAYOUT -->
-        <main class="app-main">
+        <main class="app-main" id="app-main">
             
             <!-- QUEUE PANEL -->
             <section id="panel-queue" class="main-panel active">
@@ -51,8 +71,16 @@
                         </h2>
                         <div class="header-actions">
                             <button id="btn-refresh-queue" class="secondary-btn">Refresh</button>
+                            <button id="btn-run-selected" class="secondary-btn" disabled>Run Listings</button>
                             <button id="btn-export-selected" class="primary-btn" disabled>Export ZIP</button>
                         </div>
+                    </div>
+
+                    <!-- Queue Filter Toggle -->
+                    <div class="queue-filter-bar">
+                        <button class="filter-pill active" id="filter-active" data-filter="active">Active</button>
+                        <button class="filter-pill" id="filter-completed" data-filter="completed">Completed</button>
+                        <span class="filter-count" id="filter-count"></span>
                     </div>
                     
                     <div class="queue-list" id="queue-list">
@@ -64,8 +92,8 @@
             <!-- WORKSPACE PANEL -->
             <section id="panel-workspace" class="main-panel flex-panel">
                 
-                <!-- LEFT SIDE: EXECUTION & CONSOLE -->
-                <div class="left-panel" style="width: 350px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px;">
+                <!-- LEFT SIDE: PIPELINE CONTROL -->
+                <div class="left-panel" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px;">
                     <div class="card panel-card">
                         <h2 class="panel-title">Pipeline Control</h2>
                         
@@ -97,11 +125,6 @@
                         </div>
                         
                         <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
-                    </div>
-
-                    <div class="card console-card">
-                        <h3 class="console-title">Console</h3>
-                        <div id="console-logs" class="console-logs"></div>
                     </div>
                 </div>
 
@@ -144,25 +167,70 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="input-group variations-group" id="variations-specs-wrapper" style="margin-top: 24px; display: none;">
+                            <label class="field-label">Detected Variation Specs (Sizes & Dimensions)</label>
+                            <div id="variations-specs-list" class="variations-specs-list">
+                                <!-- Populated dynamically by JS -->
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
 
             <!-- SETTINGS PANEL -->
-            <section id="panel-settings" class="main-panel hidden">
-                <div class="card" style="max-width: 600px; margin: 0 auto; width: 100%;">
-                    <h2 class="panel-title">Global Settings</h2>
-                    
-                    <div class="input-group">
-                        <label class="field-label">Local Output Directory</label>
-                        <input type="text" id="setting-output-dir" class="text-input" placeholder="C:\path\to\save\products">
-                        <small style="color: var(--neutral-grey); margin-top: 4px; display: block; font-size: 11px;">
-                            Where images, zips, and metadata are saved locally.
-                        </small>
+            <section id="panel-settings" class="main-panel settings-panel">
+                <div class="settings-scroll-area">
+                    <div class="card settings-card">
+                        <h2 class="panel-title">Global Settings</h2>
+                        
+                        <div class="input-group">
+                            <label class="field-label">Local Output Directory</label>
+                            <input type="text" id="setting-output-dir" class="text-input" placeholder="C:\path\to\save\products">
+                            <small style="color: var(--neutral-grey); margin-top: 4px; display: block; font-size: 11px;">
+                                Where images, zips, and metadata are saved locally.
+                            </small>
+                        </div>
+                        
+                        <button id="btn-save-settings" class="primary-btn">Save Settings</button>
+                        <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Saved successfully!</div>
+
+                        <!-- LISTING PRESETS — Collapsible -->
+                        <div class="presets-divider">
+                            <button id="btn-toggle-presets" class="presets-toggle-btn">
+                                <span>Listing Description Add-ons</span>
+                                <svg id="presets-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div id="presets-body" class="presets-body" style="display: none;">
+                            <p class="presets-hint">These are injected into every AI-generated description. Leave blank to skip.</p>
+
+                            <div class="input-group">
+                                <label class="field-label">Shop Intro Blurb <span class="preset-badge">Prepended</span></label>
+                                <textarea id="preset-shop-intro" class="textarea-input preset-textarea" placeholder="e.g. Welcome to our shop! We ship worldwide with care..."></textarea>
+                            </div>
+
+                            <div class="input-group">
+                                <label class="field-label">Shipping Note <span class="preset-badge">Appended</span></label>
+                                <textarea id="preset-shipping-note" class="textarea-input preset-textarea" placeholder="e.g. Ships from overseas. Estimated delivery: 15-25 business days."></textarea>
+                            </div>
+
+                            <div class="input-group">
+                                <label class="field-label">Materials Disclaimer <span class="preset-badge">Appended</span></label>
+                                <textarea id="preset-materials-disclaimer" class="textarea-input preset-textarea" placeholder="e.g. Colors may slightly vary due to monitor display settings."></textarea>
+                            </div>
+
+                            <div class="input-group">
+                                <label class="field-label">Custom Policy Override <span class="preset-badge">Replaces Default</span></label>
+                                <textarea id="preset-custom-policy" class="textarea-input preset-textarea" placeholder="Leave blank to use default cancellation & returns policy footer."></textarea>
+                            </div>
+
+                            <button id="btn-save-presets" class="primary-btn" style="margin-top: 8px;">Save Listing Presets</button>
+                            <div id="presets-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Presets saved!</div>
+                        </div>
                     </div>
-                    
-                    <button id="btn-save-settings" class="primary-btn">Save Settings</button>
-                    <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Saved successfully!</div>
                 </div>
             </section>
 

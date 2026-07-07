@@ -20,7 +20,9 @@ from src.ai_helper import (
     get_genai_client,
     generate_description_from_images,
     write_etsy_listing,
-    generate_image_prompt_details
+    generate_image_prompt_details,
+    extract_visual_specs,
+    extract_variation_specs
 )
 from src.image_gen import (
     load_themes,
@@ -77,6 +79,7 @@ class ListingSaveRequest(BaseModel):
     description: str
     tags: list
     output_dir_name: str
+    variation_images: list = None
 
 class SettingsUpdateRequest(BaseModel):
     output_dir: str
@@ -90,6 +93,40 @@ def update_settings(req: SettingsUpdateRequest):
     try:
         set_key(env_path, "OUTPUT_DIR", req.output_dir)
         load_dotenv(dotenv_path=env_path, override=True)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- LISTING PRESETS ---
+LISTING_PRESETS_PATH = os.path.join(os.path.dirname(__file__), "..", "listing_presets.json")
+
+DEFAULT_PRESETS = {
+    "shop_intro": "",
+    "shipping_note": "",
+    "materials_disclaimer": "",
+    "custom_policy": ""
+}
+
+def load_listing_presets() -> dict:
+    """Load listing presets from file, returning defaults if file does not exist."""
+    if os.path.exists(LISTING_PRESETS_PATH):
+        try:
+            with open(LISTING_PRESETS_PATH, "r", encoding="utf-8") as f:
+                return {**DEFAULT_PRESETS, **json.load(f)}
+        except Exception:
+            pass
+    return dict(DEFAULT_PRESETS)
+
+@app.get("/api/listing-presets")
+def get_listing_presets():
+    return load_listing_presets()
+
+@app.post("/api/listing-presets")
+def save_listing_presets(payload: dict):
+    try:
+        presets = {k: payload.get(k, "") for k in DEFAULT_PRESETS}
+        with open(LISTING_PRESETS_PATH, "w", encoding="utf-8") as f:
+            json.dump(presets, f, indent=4, ensure_ascii=False)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -206,14 +243,29 @@ def background_queue_product(req_data: dict):
             report_progress()
 
         # Download Variation Images
-        for idx, img_url in enumerate(var_list):
+        for idx, item in enumerate(var_list):
+            alt_text = ""
+            title_text = ""
+            if isinstance(item, dict):
+                img_url = item.get("url")
+                alt_text = item.get("alt", "")
+                title_text = item.get("title", "")
+            else:
+                img_url = item
+
             ext = ".jpg"
             for possible_ext in [".png", ".jpeg", ".webp"]:
                 if possible_ext in img_url.lower(): ext = possible_ext
             filename = f"var_{idx+1}{ext}"
             dest = os.path.join(dirs["variation_images"], filename)
             if download_image(img_url, dest):
-                metadata["variation_images"].append(f"variation_images/{filename}")
+                metadata["variation_images"].append({
+                    "local_path": f"variation_images/{filename}",
+                    "url": img_url,
+                    "alt": alt_text,
+                    "title": title_text,
+                    "detected_specs": None
+                })
             report_progress()
 
         # Download Description Images
@@ -270,7 +322,11 @@ def list_queue():
                         if meta.get("main_images"):
                             thumb = meta["main_images"][0]
                         elif meta.get("variation_images"):
-                            thumb = meta["variation_images"][0]
+                            first_var = meta["variation_images"][0]
+                            if isinstance(first_var, dict):
+                                thumb = first_var.get("local_path")
+                            else:
+                                thumb = first_var
                         elif meta.get("description_images"):
                             thumb = meta["description_images"][0]
                             
@@ -331,37 +387,111 @@ def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
             
-        metadata["status"] = "processing"
+            metadata["status"] = "processing"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
             
         streamer.publish({"status": "queue_updated"})
-        streamer.publish({"status": "progress", "message": f"Processing queued item: {metadata.get('title')[:30]}..."})
+        streamer.publish({"status": "progress", "message": f"Processing item: {metadata.get('title')[:30]}..."})
 
-        # Generate Listing Copy
         client = get_genai_client()
         title = metadata.get("title", "")
         price = metadata.get("price", "")
-        
+
+        # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
+        image_facts = metadata.get("image_facts")
+        if image_facts is not None:
+            streamer.publish({"status": "progress", "message": "Phase 1: Reusing cached image facts."})
+        else:
+            # Curate images to scan: description (up to 6), main (up to 3), variation (up to 2)
+            desc_imgs = (metadata.get("description_images") or [])[:6]
+            main_imgs = (metadata.get("main_images") or [])[:3]
+            
+            var_imgs = []
+            for item in (metadata.get("variation_images") or [])[:2]:
+                if isinstance(item, dict):
+                    var_imgs.append(item.get("local_path"))
+                else:
+                    var_imgs.append(item)
+
+            scan_targets_rel = desc_imgs + main_imgs + var_imgs
+            scan_targets_abs = [os.path.join(product_dir, img_rel) for img_rel in scan_targets_rel if img_rel]
+            
+            if scan_targets_abs:
+                streamer.publish({"status": "progress", "message": f"Phase 1: Scanning {len(scan_targets_abs)} product images for visual specs..."})
+                try:
+                    image_facts = extract_visual_specs(scan_targets_abs, client)
+                    metadata["image_facts"] = image_facts
+                    # Save progress intermediate
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(metadata, f, indent=4, ensure_ascii=False)
+                except Exception as ex:
+                    print(f"Warning: Visual spec extraction failed: {ex}")
+                    image_facts = {}
+            else:
+                image_facts = {}
+
         # Build description input
         specs_text = "\n".join([f"{k}: {v}" for k, v in metadata.get("specs", {}).items()])
         desc_input = metadata.get("description_text", "")
         if specs_text:
             desc_input = specs_text + "\n\n" + desc_input
 
-        # Fallback to visual scanning if no text
+        # Fallback to visual scanning ONLY if there is absolutely no text at all
         if not desc_input or len(desc_input.strip()) < 50:
             local_imgs = []
             for m in metadata.get("main_images", [])[:3]:
                 local_imgs.append(os.path.join(product_dir, m))
             if local_imgs:
-                streamer.publish({"status": "progress", "message": "Scanning images visually for description..."})
+                streamer.publish({"status": "progress", "message": "No text description found. Fallback: visual description scan..."})
                 desc_input = generate_description_from_images(local_imgs, client)
             else:
                 desc_input = "Generic product details."
 
-        streamer.publish({"status": "progress", "message": "Generating Etsy listing copywriting..."})
-        etsy_listing = write_etsy_listing(title, desc_input, price, client)
+        # --- PHASE 1b: VARIATION SPECIFIC EXTRACTION ---
+        variation_specs = metadata.get("variation_specs")
+        if variation_specs is not None:
+            streamer.publish({"status": "progress", "message": "Phase 1b: Reusing cached variation specs."})
+        else:
+            var_items = metadata.get("variation_images") or []
+            if var_items:
+                streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(var_items)} variations for sizes & dimensions..."})
+                try:
+                    variation_specs = extract_variation_specs(
+                        variations=var_items,
+                        product_dir=product_dir,
+                        overall_specs=image_facts,
+                        scraped_desc=desc_input,
+                        client=client
+                    )
+                    metadata["variation_specs"] = variation_specs
+                    
+                    # Update each variation image's detected_specs as well
+                    for item, spec in zip(metadata["variation_images"], variation_specs):
+                        if isinstance(item, dict):
+                            item["detected_specs"] = spec
+                    
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(metadata, f, indent=4, ensure_ascii=False)
+                except Exception as ex:
+                    print(f"Warning: Variation spec extraction failed: {ex}")
+                    variation_specs = []
+            else:
+                variation_specs = []
+
+        # --- PHASE 2 & 3: COPYWRITING & SELF-REVIEW ---
+        streamer.publish({"status": "progress", "message": "Phase 2: Generating enriched copywriting & running Phase 3 self-critique..."})
+        presets = load_listing_presets()
+        
+        etsy_listing = write_etsy_listing(
+            title=title, 
+            description=desc_input, 
+            price=price, 
+            client=client, 
+            presets=presets, 
+            image_facts=image_facts,
+            variation_specs=variation_specs
+        )
         
         if not etsy_listing:
             raise Exception("Copywriting generation failed.")
@@ -376,7 +506,11 @@ def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
             if metadata.get("main_images"):
                 ref_image_rel = metadata["main_images"][0]
             elif metadata.get("variation_images"):
-                ref_image_rel = metadata["variation_images"][0]
+                first_var = metadata["variation_images"][0]
+                if isinstance(first_var, dict):
+                    ref_image_rel = first_var.get("local_path")
+                else:
+                    ref_image_rel = first_var
                 
             ref_image = os.path.join(product_dir, ref_image_rel) if ref_image_rel else None
             reference_input = ref_image if ref_image else desc_input
@@ -390,7 +524,21 @@ def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
         metadata["status"] = "done"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
-            
+
+        # Write human-readable listing.txt alongside metadata.json
+        try:
+            listing_txt_path = os.path.join(product_dir, "listing.txt")
+            listing_txt_content = (
+                f"TITLE:\n{etsy_listing.get('title', '')}\n\n"
+                f"PRICE:\n{etsy_listing.get('suggested_price', '')}\n\n"
+                f"TAGS:\n{', '.join(etsy_listing.get('tags', []))}\n\n"
+                f"DESCRIPTION:\n{etsy_listing.get('description', '')}"
+            )
+            with open(listing_txt_path, "w", encoding="utf-8") as f:
+                f.write(listing_txt_content)
+        except Exception as txt_err:
+            print(f"Warning: Could not write listing.txt: {txt_err}")
+
         streamer.publish({"status": "queue_updated"})
         streamer.publish({"status": "progress", "message": f"Successfully completed: {title[:30]}"})
 
@@ -446,6 +594,54 @@ def export_zip(req: ExportZipRequest):
             shutil.rmtree(temp_dir)
             return FileResponse(zip_path, media_type='application/zip', filename="AliExpress_Batch_Export.zip")
             
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/save-listing")
+def save_listing(req: ListingSaveRequest):
+    try:
+        out_root = get_output_dir()
+        product_dir = os.path.join(out_root, req.output_dir_name)
+        meta_path = os.path.join(product_dir, "metadata.json")
+        
+        if not os.path.exists(meta_path):
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+            
+        # Update listing details
+        if "etsy_listing" not in metadata:
+            metadata["etsy_listing"] = {}
+            
+        metadata["etsy_listing"]["title"] = req.title
+        metadata["etsy_listing"]["suggested_price"] = req.suggested_price
+        metadata["etsy_listing"]["description"] = req.description
+        metadata["etsy_listing"]["tags"] = req.tags
+        
+        # Also update variation_images if provided in request
+        if req.variation_images is not None:
+            metadata["variation_images"] = req.variation_images
+            
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=4, ensure_ascii=False)
+            
+        # Also update human-readable listing.txt
+        try:
+            listing_txt_path = os.path.join(product_dir, "listing.txt")
+            listing_txt_content = (
+                f"TITLE:\n{req.title}\n\n"
+                f"PRICE:\n{req.suggested_price}\n\n"
+                f"TAGS:\n{', '.join(req.tags)}\n\n"
+                f"DESCRIPTION:\n{req.description}"
+            )
+            with open(listing_txt_path, "w", encoding="utf-8") as f:
+                f.write(listing_txt_content)
+        except Exception as txt_err:
+            print(f"Warning: Could not write listing.txt on save: {txt_err}")
+            
+        streamer.publish({"status": "queue_updated"})
+        return {"status": "success", "message": "Listing saved successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

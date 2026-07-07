@@ -2,7 +2,7 @@ import os
 import unittest
 import yaml
 from unittest.mock import MagicMock
-from src.ai_helper import clean_tags, write_etsy_listing
+from src.ai_helper import clean_tags, write_etsy_listing, extract_variation_specs
 from src.image_gen import load_themes, roll_theme_prompts, generate_prompts_from_inspo
 
 class TestEtsyAutomationLogic(unittest.TestCase):
@@ -85,6 +85,83 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertEqual(prompts[0]["name"], "1_showcase")
         self.assertIn("banana_earrings", prompts[0]["prompt"])
         self.assertIn(inspo_style, prompts[0]["prompt"])
+
+    @unittest.mock.patch("src.ai_helper.get_openai_client", return_value=None)
+    def test_enriched_copywriting_and_self_review(self, mock_get_openai):
+        """Test that write_etsy_listing properly formats prompts with image facts and reviews them."""
+        mock_client = MagicMock()
+        mock_response_listing = MagicMock()
+        mock_response_review = MagicMock()
+
+        # Phase 2 mock draft listing
+        mock_response_listing.text = '{"title": "Test Title", "description": "Test description of product", "tags": ["tag1", "tag2"], "suggested_price": "$15.99"}'
+        # Phase 3 mock review verdict (approved)
+        mock_response_review.text = '{"approved": true, "title_issues": "", "description_issues": "", "tag_issues": ""}'
+
+        # Return sequence for the two content generations
+        mock_client.models.generate_content.side_effect = [mock_response_listing, mock_response_review]
+
+        image_facts = {
+            "dimensions": "Height: 38cm, Width: 28cm",
+            "materials": "100% Woven Yarn"
+        }
+
+        result = write_etsy_listing(
+            title="Test Title",
+            description="Scraped description",
+            price="$15.99",
+            client=mock_client,
+            presets={},
+            image_facts=image_facts
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["title"], "Test Title")
+        self.assertEqual(result["suggested_price"], "$15.99")
+        # Ensure client was called for both generating draft and self-review critic
+        self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+    @unittest.mock.patch("src.ai_helper.get_openai_client", return_value=None)
+    def test_variation_spec_extraction(self, mock_get_openai):
+        """Test that extract_variation_specs constructs the prompt, handles images, and returns structured specs."""
+        import json
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "variations": [
+                {
+                    "name": "Red - S",
+                    "size": "S",
+                    "dimensions": "Height: 38cm, Width: 28cm",
+                    "other_details": ""
+                },
+                {
+                    "name": "Red - M",
+                    "size": "M",
+                    "dimensions": "Height: 40cm, Width: 30cm",
+                    "other_details": ""
+                }
+            ]
+        })
+        mock_client.models.generate_content.return_value = mock_response
+
+        variations_input = [
+            {"local_path": "variation_images/var_1.jpg", "alt": "Red - S", "title": ""},
+            {"local_path": "variation_images/var_2.jpg", "alt": "Red - M", "title": ""}
+        ]
+
+        result = extract_variation_specs(
+            variations=variations_input,
+            product_dir="dummy_dir",
+            overall_specs={"dimensions": "S: 38x28cm, M: 40x30cm"},
+            scraped_desc="Product description",
+            client=mock_client
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["size"], "S")
+        self.assertEqual(result[1]["dimensions"], "Height: 40cm, Width: 30cm")
+        mock_client.models.generate_content.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
