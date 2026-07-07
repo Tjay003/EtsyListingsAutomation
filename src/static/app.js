@@ -38,6 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnSave = document.getElementById("btn-save");
 
     const etsyTitle = document.getElementById("etsy-title");
+    const etsyCategory = document.getElementById("etsy-category");
     const etsyPrice = document.getElementById("etsy-price");
     const tagsContainer = document.getElementById("tags-container");
     const etsyDesc = document.getElementById("etsy-desc");
@@ -159,7 +160,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     if (btnResetRules) {
         btnResetRules.addEventListener("click", () => {
-            presetCustomPromptRules.value = "Do not mention that the item is from China or AliExpress. Maintain a premium, handmade, or boutique brand tone.";
+            presetCustomPromptRules.value = "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Your task is to transform raw, clunky supplier specifications from AliExpress/manufacturers into a high-end, high-converting Etsy listing asset.\n--- CRITICAL COMPLIANCE RULES ---\n1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"bulk\", \"wholesale\", or \"shipping tracking variations\". Reframe everything around a \"curated, small-batch, premium boutique model\".\n2. TITLE RESTRICTIONS: Do not keyword-stuff titles. Use clean, natural keyphrases separated by pipes (|). Put primary structural/material identifiers in the first 40 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".\n3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. For all bulleted lists or technical attribute breakdowns, you must strictly use a literal hyphen (-) instead of bullet dots (•, *, or circle symbols). Ensure key traits like color, exact size, and materials appear clearly in the first two sentences.\n4. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the Title exactly match 2 or 3 of the Tags.\n5. META DESCRIPTION: Make the first paragraph of the description exactly 1-2 sentences (under 160 characters), naturally weaving in the primary keywords for Google SEO.\n6. OCCASION TARGETING: If applicable, weave in 1 or 2 tags targeting gift intent (e.g., \"Gifts for Her\", \"Anniversary Gift\").";
         });
     }
 
@@ -407,7 +408,17 @@ document.addEventListener("DOMContentLoaded", () => {
                         </div>
                         <div class="preview-value-box">${listing.title || "—"}</div>
                     </div>
-                    
+                    <div class="preview-field" style="margin-top: 16px;">
+                        <div class="preview-field-header">
+                            <span class="preview-label">Category</span>
+                            <button class="copy-btn" data-copy-type="category">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                        <div class="preview-value-box">${listing.category || "Not categorized"}</div>
+                    </div>
+
                     <div class="preview-field" style="margin-top: 16px;">
                         <div class="preview-field-header">
                             <span class="preview-label">Tags</span>
@@ -456,6 +467,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 
                 if (copyType === "title") {
                     textToCopy = listing.title || "";
+                } else if (copyType === "category") {
+                    textToCopy = listing.category || "";
                 } else if (copyType === "price") {
                     textToCopy = listing.suggested_price || "";
                 } else if (copyType === "tags") {
@@ -730,6 +743,9 @@ document.addEventListener("DOMContentLoaded", () => {
         btnSave.disabled = false;
 
         etsyTitle.value = activeListing.title || "";
+        if (etsyCategory) {
+            etsyCategory.value = activeListing.category || "";
+        }
         etsyPrice.value = activeListing.suggested_price || "";
         etsyDesc.value = activeListing.description || "";
 
@@ -910,6 +926,7 @@ document.addEventListener("DOMContentLoaded", () => {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
                 title: etsyTitle.value,
+                category: etsyCategory ? etsyCategory.value : "",
                 suggested_price: etsyPrice.value,
                 description: etsyDesc.value,
                 tags: activeListing.tags,

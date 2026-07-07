@@ -72,6 +72,7 @@ class EtsyListing(BaseModel):
     description: str = Field(description="High-converting product description highlighting key features and specifications. Make sure to use double newlines (\\n\\n) between paragraphs, features, and specs to avoid a single dense block of text.")
     tags: List[str] = Field(description="13 relevant search keywords or short tag phrases for Etsy listings")
     suggested_price: str = Field(description="Suggested Etsy retail price in USD, e.g., '$24.99'")
+    category: str = Field(description="The most accurate Etsy category path or specific category name (e.g., 'Home & Living > Home Decor' or 'Crossbody Bags')")
 
 class VisualSpecs(BaseModel):
     dimensions: str = Field(description="Exact measurements extracted from text/labels in the images, or empty string if not clearly shown")
@@ -529,6 +530,7 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         "Analyze the draft Etsy listing against the Scraped Info and the Image Facts extracted from product photos.\n\n"
         "Draft Etsy Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
+        f"Category: {listing_data.get('category', '')}\n"
         f"Price: {listing_data.get('suggested_price', '')}\n"
         f"Tags: {', '.join(listing_data.get('tags', []))}\n"
         f"Description: {listing_data.get('description', '')}\n\n"
@@ -591,6 +593,7 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         "Make sure to preserve and use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications in the description so it is clean, structured, and highly readable.\n\n"
         "Draft Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
+        f"Category: {listing_data.get('category', '')}\n"
         f"Price: {listing_data.get('suggested_price', '')}\n"
         f"Tags: {', '.join(listing_data.get('tags', []))}\n"
         f"Description: {listing_data.get('description', '')}\n\n"
@@ -686,7 +689,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         "4. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
         "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n"
         f"{custom_rules_str}\n"
-        "Output your response strictly as a JSON object with keys: 'title', 'description', 'tags' (list of strings), and 'suggested_price'."
+        "Output your response strictly as a JSON object with keys: 'title', 'description', 'tags' (list of strings), 'suggested_price', and 'category'."
     )
 
     listing_data = None
