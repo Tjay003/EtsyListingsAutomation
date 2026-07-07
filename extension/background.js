@@ -37,24 +37,8 @@ chrome.webRequest.onCompleted.addListener(
     if (!details.url) return;
     const url = details.url;
 
-    // Filter for description endpoints
-    const isDescUrl = (
-      url.includes('desc.htm') ||
-      url.includes('descriptionModule') ||
-      url.includes('/desc/') ||
-      url.includes('description') ||
-      url.includes('fourier')
-    );
-    if (!isDescUrl) {
-      console.log(`[Background] Request skipped: Not a description or fourier URL: ${url}`);
-      return;
-    }
-
     const tabId = details.tabId;
-    if (tabId === -1) {
-      console.log(`[Background] Request skipped: No valid tabId (-1) for URL: ${url}`);
-      return;
-    }
+    if (tabId === -1) return;
 
     // Decouple Fourier wrapper URL if present
     let realDescUrl = url;
@@ -63,11 +47,25 @@ chrome.webRequest.onCompleted.addListener(
       const innerUrl = parsedUrl.searchParams.get('url');
       if (innerUrl) {
         realDescUrl = decodeURIComponent(innerUrl);
-        console.log(`[Background] Decoupled fourier URL to: ${realDescUrl}`);
+        console.log(`[Background-Debug] Decoupled fourier inner URL: ${realDescUrl}`);
       }
-    } catch(e) {
-      console.warn(`[Background] Failed to parse Fourier search params: ${e.message}`);
+    } catch(e) { }
+
+    // Strict filter for description endpoints
+    const isDescUrl = (
+      realDescUrl.includes('desc.htm') ||
+      realDescUrl.includes('descriptionModule') ||
+      realDescUrl.includes('/desc/') ||
+      realDescUrl.includes('description')
+    );
+    
+    if (!isDescUrl) {
+      if (url.includes('fourier') || url.includes('desc')) {
+          console.log(`[Background-Debug] REJECTED description URL: ${realDescUrl}`);
+      }
+      return;
     }
+    console.log(`[Background-Debug] ACCEPTED description URL: ${realDescUrl}`);
 
     // Ensure we only fetch domains belonging to AliExpress / AliCDN to prevent CORS errors on third-party trackers
     try {
@@ -118,8 +116,8 @@ chrome.webRequest.onCompleted.addListener(
       .then(html => {
         console.log(`[Background] Successfully fetched ${html.length} chars of HTML. Parsing images...`);
         
-        // Broader regex matching both alicdn.com and aliexpress-media.com with optional file extension
-        const regex = /(?:https?:)?\/\/[^\s"'<>]*?(?:alicdn\.com|aliexpress-media\.com)[^\s"'<>]*?\/kf\/[a-zA-Z0-9_-]+(?:\.(?:jpg|png|jpeg|webp))?/gi;
+        // Broader regex matching alicdn.com and aliexpress-media.com images (including /kf/ and /img/ibank/ etc.)
+        const regex = /(?:https?:)?\/\/[^\s"'<>]*?(?:alicdn\.com|aliexpress-media\.com)[^\s"'<>]*?(?:\.(?:jpg|png|jpeg|webp)|\/kf\/[a-zA-Z0-9_-]+)[^\s"'<>]*/gi;
         const images = new Set();
         let m;
         while ((m = regex.exec(html)) !== null) {

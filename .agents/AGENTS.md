@@ -38,12 +38,13 @@ The product folder under `outputs/` maintains state in a `metadata.json` file. N
 
 ---
 
-## Debugging the Extension Background Script
-AliExpress description data loads dynamically. The Chrome Extension intercepts API requests in the background Service Worker:
+## Debugging the Extension & Scraper Logic
+AliExpress description data loads dynamically. The Chrome Extension intercepts API requests in the background Service Worker and scans the DOM silently:
 1. Open Chrome at `chrome://extensions/`.
 2. Toggle on **Developer Mode**.
-3. Under the **Etsy Listings Automation** card, click **Inspect views: service worker** to view the console logs.
-4. The background script prints verbose logs for raw URL interception, decoupling of Fourier trackers, domain filtering, and Regex image parses (supporting both `alicdn.com` and `aliexpress-media.com` domains).
+3. Under the **Etsy Listings Automation** card, click **Inspect views: service worker** to view the `[Background-Debug]` console logs.
+4. The background script decouples `fourier` trackers and strictly filters out review endpoints. It intercepts the pure description HTML and applies a broad Regex to capture image assets. This regex supports standard `/kf/` paths as well as alternative `/img/ibank/` paths (commonly used for items dropshipped from 1688), matching across `alicdn.com` and `aliexpress-media.com`.
+5. The content script (`content.js`) provides a `[Content-Debug]` log for every image found in the DOM. It also silently extracts hidden item specifications using `.textContent` rather than triggering click events, preventing the page from suddenly jumping/teleporting when running the scraper.
 
 ---
 

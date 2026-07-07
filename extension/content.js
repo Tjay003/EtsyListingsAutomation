@@ -121,7 +121,7 @@ async function scrapePage() {
     if (!src) return;
     
     // Check if it's an AliExpress product image format
-    if (!PRODUCT_HASH_REGEX.test(src) && !src.includes("/kf/")) {
+    if (!PRODUCT_HASH_REGEX.test(src) && !src.includes("/kf/") && !src.includes("alicdn.com") && !src.includes("aliexpress-media.com")) {
         return; 
     }
 
@@ -129,6 +129,7 @@ async function scrapePage() {
 
     // Skip known bad containers (reviews, UI, etc.)
     if (SKIP_CLASSES.some(skipCls => chain.includes(skipCls))) {
+      console.log(`[Content-Debug] SKIPPED (bad container): ${cleanImageURL(src)} | Chain: ${chain}`);
       return;
     }
 
@@ -147,20 +148,28 @@ async function scrapePage() {
       parent = parent.parentElement;
     }
     
-    if (isReviewOrAvatar) return;
+    if (isReviewOrAvatar) {
+      console.log(`[Content-Debug] SKIPPED (review/avatar): ${cleanImageURL(src)} | Chain: ${chain}`);
+      return;
+    }
 
     let cleanUrl = cleanImageURL(src);
 
     if (VARIATION_CLASSES.some(c => chain.includes(c))) {
+      console.log(`[Content-Debug] FOUND VARIATION: ${cleanUrl} | Chain: ${chain}`);
       variationImagesMap.set(cleanUrl, {
         url: cleanUrl,
         alt: (img.alt || img.title || "").trim(),
         title: (img.title || img.alt || "").trim()
       });
     } else if (MAIN_CLASSES.some(c => chain.includes(c))) {
+      console.log(`[Content-Debug] FOUND MAIN: ${cleanUrl} | Chain: ${chain}`);
       mainImages.add(cleanUrl);
     } else if (DESCRIPTION_CLASSES.some(c => chain.includes(c))) {
+      console.log(`[Content-Debug] FOUND DESC: ${cleanUrl} | Chain: ${chain}`);
       descriptionImages.add(cleanUrl);
+    } else {
+      console.log(`[Content-Debug] UNCLASSIFIED: ${cleanUrl} | Chain: ${chain}`);
     }
   });
 
@@ -195,25 +204,14 @@ async function scrapePage() {
   };
 
   // 4. Scrape Specifications & Details (handle wildcard prefix class names)
-  // Auto-expand specifications by clicking "View more" if present
-  const specBtn = document.querySelector('[class*="specification--btn--"]');
-  if (specBtn) {
-    const btnText = (specBtn.innerText || "").toLowerCase();
-    if (btnText.includes("more")) {
-      console.log('[AliExpress Scraper] Clicking specifications View more button...');
-      specBtn.click();
-      await new Promise(resolve => setTimeout(resolve, 600)); // Wait for expand transition
-    }
-  }
-
   const specsObj = {};
   const propContainers = document.querySelectorAll('[class*="specification--prop--"], .product-prop');
   propContainers.forEach(container => {
     const titleEl = container.querySelector('[class*="specification--title--"], .title, .name');
     const descEl = container.querySelector('[class*="specification--desc--"], .value, .desc');
     if (titleEl && descEl) {
-      const key = titleEl.innerText.replace(/:$/, "").trim();
-      const val = descEl.innerText.trim();
+      const key = titleEl.textContent.replace(/:$/, "").trim();
+      const val = descEl.textContent.trim();
       if (key && val) {
         specsObj[key] = val;
       }
