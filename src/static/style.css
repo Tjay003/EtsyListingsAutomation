@@ -211,6 +211,7 @@ body {
     gap: 16px;
     overflow-y: auto;
     flex: 1;
+    min-height: 0;
 }
 
 .queue-item {
