@@ -104,7 +104,8 @@ DEFAULT_PRESETS = {
     "shop_intro": "",
     "shipping_note": "",
     "materials_disclaimer": "",
-    "custom_policy": ""
+    "custom_policy": "",
+    "custom_prompt_rules": "Do not mention that the item is from China or AliExpress. Maintain a premium, handmade, or boutique brand tone."
 }
 
 def load_listing_presets() -> dict:

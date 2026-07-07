@@ -207,6 +207,17 @@
                         <div id="presets-body" class="presets-body" style="display: none;">
                             <p class="presets-hint">These are injected into every AI-generated description. Leave blank to skip.</p>
 
+                            <div class="input-group" style="background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <label class="field-label" style="margin: 0;">AI Copywriting Rules <span class="preset-badge" style="background: var(--primary-accent); color: white;">System Prompt</span></label>
+                                    <button id="btn-reset-rules" class="secondary-btn" style="padding: 4px 10px; font-size: 11px;">Reset to Default</button>
+                                </div>
+                                <textarea id="preset-custom-prompt-rules" class="textarea-input preset-textarea" style="min-height: 80px;" placeholder="e.g. Do not mention China. Keep it professional."></textarea>
+                                <small style="color: var(--neutral-grey); margin-top: 6px; display: block; font-size: 11px;">
+                                    These instructions guide how the AI writes the Title, Description, and Tags.
+                                </small>
+                            </div>
+
                             <div class="input-group">
                                 <label class="field-label">Shop Intro Blurb <span class="preset-badge">Prepended</span></label>
                                 <textarea id="preset-shop-intro" class="textarea-input preset-textarea" placeholder="e.g. Welcome to our shop! We ship worldwide with care..."></textarea>

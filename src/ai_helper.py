@@ -664,6 +664,12 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
     if not var_str:
         var_str = "None extracted"
 
+    custom_rules = presets.get("custom_prompt_rules", "").strip()
+    if custom_rules:
+        custom_rules_str = f"6. CUSTOM INSTRUCTIONS: {custom_rules}\n"
+    else:
+        custom_rules_str = ""
+
     prompt = (
         f"Create an Etsy listing for the following product:\n"
         f"Original Title: {title}\n"
@@ -678,7 +684,8 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         "2. Write a detailed, structured Description focusing on value, features, and specs. Use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications to make the layout clean and highly readable. Do NOT output the description as a single dense paragraph.\n"
         "3. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts' over the 'Scraped Description' if they conflict. If variations have different sizes (e.g. S, M, L), include a clear size guide listing each variation and its corresponding dimensions in the description.\n"
         "4. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
-        "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n\n"
+        "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n"
+        f"{custom_rules_str}\n"
         "Output your response strictly as a JSON object with keys: 'title', 'description', 'tags' (list of strings), and 'suggested_price'."
     )
 

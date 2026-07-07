@@ -56,6 +56,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const presetShippingNote = document.getElementById("preset-shipping-note");
     const presetMaterialsDisclaimer = document.getElementById("preset-materials-disclaimer");
     const presetCustomPolicy = document.getElementById("preset-custom-policy");
+    const presetCustomPromptRules = document.getElementById("preset-custom-prompt-rules");
+    const btnResetRules = document.getElementById("btn-reset-rules");
     const btnSavePresets = document.getElementById("btn-save-presets");
     const presetsStatus = document.getElementById("presets-status");
 
@@ -148,8 +150,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 presetShippingNote.value = data.shipping_note || "";
                 presetMaterialsDisclaimer.value = data.materials_disclaimer || "";
                 presetCustomPolicy.value = data.custom_policy || "";
+                if (data.custom_prompt_rules !== undefined) {
+                    presetCustomPromptRules.value = data.custom_prompt_rules;
+                }
             })
             .catch(() => {}); // Silently fail if endpoint not yet available
+    }
+    
+    if (btnResetRules) {
+        btnResetRules.addEventListener("click", () => {
+            presetCustomPromptRules.value = "Do not mention that the item is from China or AliExpress. Maintain a premium, handmade, or boutique brand tone.";
+        });
     }
 
     btnSavePresets.addEventListener("click", () => {
@@ -157,7 +168,8 @@ document.addEventListener("DOMContentLoaded", () => {
             shop_intro: presetShopIntro.value.trim(),
             shipping_note: presetShippingNote.value.trim(),
             materials_disclaimer: presetMaterialsDisclaimer.value.trim(),
-            custom_policy: presetCustomPolicy.value.trim()
+            custom_policy: presetCustomPolicy.value.trim(),
+            custom_prompt_rules: presetCustomPromptRules.value.trim()
         };
         fetch("/api/listing-presets", {
             method: "POST",
