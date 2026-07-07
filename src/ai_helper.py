@@ -69,7 +69,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 # Define the structured output format for the Etsy listing
 class EtsyListing(BaseModel):
     title: str = Field(description="Search-optimized Etsy product title, maximum 140 characters")
-    description: str = Field(description="High-converting product description highlighting key features and specifications")
+    description: str = Field(description="High-converting product description highlighting key features and specifications. Make sure to use double newlines (\\n\\n) between paragraphs, features, and specs to avoid a single dense block of text.")
     tags: List[str] = Field(description="13 relevant search keywords or short tag phrases for Etsy listings")
     suggested_price: str = Field(description="Suggested Etsy retail price in USD, e.g., '$24.99'")
 
@@ -587,7 +587,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
 
     correction_prompt = (
         "You are an expert copywriter. Revise the following draft Etsy listing based on the critic feedback.\n"
-        "Ensure all details are 100% accurate to the product specifications and images.\n\n"
+        "Ensure all details are 100% accurate to the product specifications and images.\n"
+        "Make sure to preserve and use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications in the description so it is clean, structured, and highly readable.\n\n"
         "Draft Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
         f"Price: {listing_data.get('suggested_price', '')}\n"
@@ -599,6 +600,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         f"3. Tag issues: {verdict.get('tag_issues', 'None')}\n\n"
         "Image Facts (For Reference):\n"
         f"{facts_part}\n\n"
+        "Original Scraped Info (For Reference):\n"
+        f"{scraped_part}\n\n"
         "Output your corrected listing strictly as a JSON object matching the EtsyListing schema (title, description, tags, suggested_price)."
     )
 
@@ -672,7 +675,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         f"{var_str}\n\n"
         "Guidelines:\n"
         "1. Write an SEO-friendly, catchy Title under 140 characters.\n"
-        "2. Write a detailed, structured Description focusing on value, features, and specs.\n"
+        "2. Write a detailed, structured Description focusing on value, features, and specs. Use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications to make the layout clean and highly readable. Do NOT output the description as a single dense paragraph.\n"
         "3. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts' over the 'Scraped Description' if they conflict. If variations have different sizes (e.g. S, M, L), include a clear size guide listing each variation and its corresponding dimensions in the description.\n"
         "4. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
         "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n\n"
