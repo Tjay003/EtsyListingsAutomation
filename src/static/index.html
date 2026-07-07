@@ -183,9 +183,11 @@
             </section>
 
             <!-- SETTINGS PANEL -->
-            <section id="panel-settings" class="main-panel settings-panel">
-                <div class="settings-scroll-area">
-                    <div class="card settings-card">
+            <section id="panel-settings" class="main-panel settings-panel" style="padding: 24px; display: none; height: 100%;">
+                <div style="display: flex; gap: 24px; height: 100%;">
+                    
+                    <!-- LEFT SIDE: Global Settings -->
+                    <div class="card" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; height: fit-content;">
                         <h2 class="panel-title">Global Settings</h2>
                         
                         <div class="input-group">
@@ -196,56 +198,56 @@
                             </small>
                         </div>
                         
-                        <button id="btn-save-settings" class="primary-btn">Save Settings</button>
-                        <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Saved successfully!</div>
+                        <div>
+                            <button id="btn-save-settings" class="primary-btn" style="width: 100%;">Save Settings</button>
+                            <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none; text-align: center;">Saved successfully!</div>
+                        </div>
+                    </div>
 
-                        <!-- LISTING PRESETS — Collapsible -->
-                        <div class="presets-divider">
-                            <button id="btn-toggle-presets" class="presets-toggle-btn">
-                                <span>Listing Description Add-ons</span>
-                                <svg id="presets-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </button>
+                    <!-- RIGHT SIDE: Presets & Rules -->
+                    <div class="card" style="flex: 1; display: flex; flex-direction: column; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--bg-canvas); padding-bottom: 12px; margin-bottom: 20px;">
+                            <h2 class="panel-title" style="border: none; margin: 0; padding: 0;">Listing Description Add-ons</h2>
+                            <button id="btn-save-presets" class="primary-btn">Save Add-ons</button>
+                        </div>
+                        <p class="presets-hint">These instructions and blurbs are injected into every AI-generated listing.</p>
+                        <div id="presets-status" style="margin-bottom: 12px; color: #45D070; font-size: 12px; display: none;">Add-ons saved successfully!</div>
+
+                        <!-- AI Copywriting Rules -->
+                        <div class="input-group" style="background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 24px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label class="field-label" style="margin: 0;">AI Copywriting Rules <span class="preset-badge" style="background: var(--primary); color: var(--card-bg);">System Prompt</span></label>
+                                <button id="btn-reset-rules" class="secondary-btn" style="padding: 4px 10px; font-size: 11px;">Reset to Default</button>
+                            </div>
+                            <textarea id="preset-custom-prompt-rules" class="textarea-input preset-textarea" style="min-height: 250px; font-family: monospace; font-size: 12px; line-height: 1.4;" placeholder="e.g. Do not mention China. Keep it professional."></textarea>
+                            <small style="color: var(--neutral-grey); margin-top: 6px; display: block; font-size: 11px;">
+                                These instructions strictly guide how the AI writes the Title, Description, and Tags.
+                            </small>
                         </div>
 
-                        <div id="presets-body" class="presets-body" style="display: none;">
-                            <p class="presets-hint">These are injected into every AI-generated description. Leave blank to skip.</p>
-
-                            <div class="input-group" style="background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <label class="field-label" style="margin: 0;">AI Copywriting Rules <span class="preset-badge" style="background: var(--primary-accent); color: white;">System Prompt</span></label>
-                                    <button id="btn-reset-rules" class="secondary-btn" style="padding: 4px 10px; font-size: 11px;">Reset to Default</button>
-                                </div>
-                                <textarea id="preset-custom-prompt-rules" class="textarea-input preset-textarea" style="min-height: 80px;" placeholder="e.g. Do not mention China. Keep it professional."></textarea>
-                                <small style="color: var(--neutral-grey); margin-top: 6px; display: block; font-size: 11px;">
-                                    These instructions guide how the AI writes the Title, Description, and Tags.
-                                </small>
-                            </div>
-
+                        <!-- Additional Blurbs -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                             <div class="input-group">
                                 <label class="field-label">Shop Intro Blurb <span class="preset-badge">Prepended</span></label>
-                                <textarea id="preset-shop-intro" class="textarea-input preset-textarea" placeholder="e.g. Welcome to our shop! We ship worldwide with care..."></textarea>
+                                <textarea id="preset-shop-intro" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Welcome to our shop! We ship worldwide with care..."></textarea>
                             </div>
 
                             <div class="input-group">
                                 <label class="field-label">Shipping Note <span class="preset-badge">Appended</span></label>
-                                <textarea id="preset-shipping-note" class="textarea-input preset-textarea" placeholder="e.g. Ships from overseas. Estimated delivery: 15-25 business days."></textarea>
+                                <textarea id="preset-shipping-note" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Ships from overseas. Estimated delivery: 15-25 business days."></textarea>
                             </div>
 
                             <div class="input-group">
                                 <label class="field-label">Materials Disclaimer <span class="preset-badge">Appended</span></label>
-                                <textarea id="preset-materials-disclaimer" class="textarea-input preset-textarea" placeholder="e.g. Colors may slightly vary due to monitor display settings."></textarea>
+                                <textarea id="preset-materials-disclaimer" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Colors may slightly vary due to monitor display settings."></textarea>
                             </div>
 
                             <div class="input-group">
-                                <label class="field-label">Custom Policy Override <span class="preset-badge">Replaces Default</span></label>
-                                <textarea id="preset-custom-policy" class="textarea-input preset-textarea" placeholder="Leave blank to use default cancellation & returns policy footer."></textarea>
+                                <label class="field-label">Custom Policy <span class="preset-badge">Replaces Default</span></label>
+                                <textarea id="preset-custom-policy" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="Leave blank to use default cancellation & returns policy."></textarea>
                             </div>
-
-                            <button id="btn-save-presets" class="primary-btn" style="margin-top: 8px;">Save Listing Presets</button>
-                            <div id="presets-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none;">Presets saved!</div>
                         </div>
+
                     </div>
                 </div>
             </section>

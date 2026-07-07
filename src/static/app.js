@@ -20,11 +20,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const filterPills = document.querySelectorAll(".filter-pill");
     let activeFilter = "active"; // "active" | "completed"
 
-    // Presets accordion
-    const btnTogglePresets = document.getElementById("btn-toggle-presets");
-    const presetsBody = document.getElementById("presets-body");
-    const presetsChevron = document.getElementById("presets-chevron");
-
     // Workspace Elements
     const wsProductTitle = document.getElementById("ws-product-title");
     const wsProductSlug = document.getElementById("ws-product-slug");
@@ -92,13 +87,6 @@ document.addEventListener("DOMContentLoaded", () => {
         pipelineRunning = running;
         consoleActivityDot.classList.toggle("running", running);
     }
-
-    // --- PRESETS ACCORDION ---
-    btnTogglePresets.addEventListener("click", () => {
-        const isOpen = presetsBody.style.display !== "none";
-        presetsBody.style.display = isOpen ? "none" : "block";
-        presetsChevron.classList.toggle("rotated", !isOpen);
-    });
 
     // --- NAVIGATION ---
     navBtns.forEach(btn => {
