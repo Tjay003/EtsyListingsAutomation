@@ -712,7 +712,7 @@ body {
 .listing-preview-panel {
     display: none;
     border-top: 1.5px solid var(--border-color);
-    padding: 20px 24px;
+    padding: 24px;
     background-color: var(--card-bg);
     animation: slideDown 0.2s ease-out;
 }
@@ -726,8 +726,28 @@ body {
     to   { opacity: 1; transform: translateY(0); }
 }
 
+.preview-grid-top {
+    display: grid;
+    grid-template-columns: 2.5fr 1fr;
+    gap: 20px;
+}
+
+@media (max-width: 768px) {
+    .preview-grid-top {
+        grid-template-columns: 1fr;
+    }
+}
+
 .preview-field {
-    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.preview-field-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
 }
 
 .preview-label {
@@ -736,17 +756,59 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--neutral-grey);
-    margin-bottom: 6px;
+    margin: 0;
     display: block;
 }
 
-.preview-value {
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--neutral-grey);
+    background-color: var(--bg-canvas);
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+    outline: none;
+    line-height: 1;
+}
+
+.copy-btn:hover {
+    background-color: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+    box-shadow: 2px 2px 0px var(--secondary);
+    transform: translate(-1px, -1px);
+}
+
+.copy-btn:active {
+    transform: translate(0, 0);
+    box-shadow: none;
+}
+
+.copy-btn.copied {
+    background-color: #45D070;
+    color: #fff;
+    border-color: #45D070;
+    box-shadow: none;
+    transform: none;
+}
+
+.preview-value-box {
     font-size: 13px;
     font-weight: 600;
     color: var(--primary);
-    line-height: 1.4;
-    word-break: break-word;
+    background: var(--bg-canvas);
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 14px;
+    line-height: 1.5;
     user-select: text;
+    word-break: break-word;
 }
 
 .preview-desc {
@@ -757,14 +819,15 @@ body {
     background: var(--bg-canvas);
     border: 1.5px solid var(--border-color);
     border-radius: 8px;
-    padding: 12px;
-    max-height: 200px;
+    padding: 12px 14px;
+    height: 180px;
     overflow-y: auto;
     line-height: 1.6;
     user-select: text;
-    resize: none;
+    resize: vertical;
     width: 100%;
     font-family: var(--font-stack);
+    outline: none;
 }
 
 .preview-tags {

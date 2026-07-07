@@ -383,23 +383,94 @@ document.addEventListener("DOMContentLoaded", () => {
             : `<span class="preview-value" style="color:var(--neutral-grey)">—</span>`;
 
         panel.innerHTML = `
-            <div class="preview-field">
-                <span class="preview-label">Etsy Title</span>
-                <div class="preview-value">${listing.title || "—"}</div>
+            <div class="preview-grid-top">
+                <div class="preview-left-col">
+                    <div class="preview-field">
+                        <div class="preview-field-header">
+                            <span class="preview-label">Etsy Title</span>
+                            <button class="copy-btn" data-copy-type="title">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                        <div class="preview-value-box">${listing.title || "—"}</div>
+                    </div>
+                    
+                    <div class="preview-field" style="margin-top: 16px;">
+                        <div class="preview-field-header">
+                            <span class="preview-label">Tags</span>
+                            <button class="copy-btn" data-copy-type="tags">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                        <div class="preview-value-box" style="padding: 10px 14px;">${tagsHtml}</div>
+                    </div>
+                </div>
+                
+                <div class="preview-right-col">
+                    <div class="preview-field">
+                        <div class="preview-field-header">
+                            <span class="preview-label">Price</span>
+                            <button class="copy-btn" data-copy-type="price">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                        <div class="preview-value-box">${listing.suggested_price || "—"}</div>
+                    </div>
+                </div>
             </div>
-            <div class="preview-field">
-                <span class="preview-label">Price</span>
-                <div class="preview-value">${listing.suggested_price || "—"}</div>
-            </div>
-            <div class="preview-field">
-                <span class="preview-label">Tags</span>
-                ${tagsHtml}
-            </div>
-            <div class="preview-field">
-                <span class="preview-label">Description</span>
+            
+            <div class="preview-field" style="margin-top: 16px;">
+                <div class="preview-field-header">
+                    <span class="preview-label">Description</span>
+                    <button class="copy-btn" data-copy-type="desc">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <span>Copy</span>
+                    </button>
+                </div>
                 <textarea class="preview-desc" readonly>${listing.description || "—"}</textarea>
             </div>
         `;
+
+        // Wire up copy event listeners
+        panel.querySelectorAll(".copy-btn").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation(); // Avoid triggering any toggle actions from parent rows
+                
+                let textToCopy = "";
+                const copyType = btn.dataset.copyType;
+                
+                if (copyType === "title") {
+                    textToCopy = listing.title || "";
+                } else if (copyType === "price") {
+                    textToCopy = listing.suggested_price || "";
+                } else if (copyType === "tags") {
+                    textToCopy = (listing.tags || []).join(", ");
+                } else if (copyType === "desc") {
+                    textToCopy = listing.description || "";
+                }
+                
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    const origHtml = btn.innerHTML;
+                    btn.classList.add("copied");
+                    btn.innerHTML = `
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Copied!</span>
+                    `;
+                    setTimeout(() => {
+                        btn.classList.remove("copied");
+                        btn.innerHTML = origHtml;
+                    }, 2000);
+                }).catch(err => {
+                    console.error("Clipboard copy failed:", err);
+                });
+            });
+        });
+
         return panel;
     }
 
