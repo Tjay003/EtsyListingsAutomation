@@ -424,6 +424,11 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
 
 def clean_tags(tags, client):
     """Ensure all tags are under 20 characters, split/condensing any that exceed the limit."""
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+    if not isinstance(tags, list):
+        tags = []
+        
     openai_client = get_openai_client()
     cleaned = []
     for tag in tags:
@@ -605,7 +610,7 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         f"{facts_part}\n\n"
         "Original Scraped Info (For Reference):\n"
         f"{scraped_part}\n\n"
-        "Output your corrected listing strictly as a JSON object matching the EtsyListing schema (title, description, tags, suggested_price)."
+        "Output your corrected listing strictly as a JSON object matching the EtsyListing schema with keys: 'title', 'description', 'tags' (list of strings), 'suggested_price', and 'category'."
     )
 
     corrected_data = listing_data
@@ -685,7 +690,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         "Guidelines:\n"
         "1. Write an SEO-friendly, catchy Title under 140 characters.\n"
         "2. Write a detailed, structured Description focusing on value, features, and specs. Use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications to make the layout clean and highly readable. Do NOT output the description as a single dense paragraph.\n"
-        "3. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts' over the 'Scraped Description' if they conflict. If variations have different sizes (e.g. S, M, L), include a clear size guide listing each variation and its corresponding dimensions in the description.\n"
+        "3. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts'. If dimensions are unclear, missing, or empty, DO NOT mention dimensions at all. Do not invent or guess them.\n"
         "4. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
         "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n"
         f"{custom_rules_str}\n"
@@ -728,7 +733,10 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
     listing_data = review_and_refine_listing(listing_data, description, image_facts, client=client)
 
     # Apply strict tag guidelines
-    listing_data["tags"] = clean_tags(listing_data["tags"], client)
+    listing_data["tags"] = clean_tags(listing_data.get("tags", []), client)
+    
+    if not listing_data.get("category"):
+        listing_data["category"] = "Not categorized"
 
     # Inject presets and policy
     listing_data = _apply_presets_to_listing(listing_data, presets)

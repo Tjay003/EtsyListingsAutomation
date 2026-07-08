@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnRunSelected = document.getElementById("btn-run-selected");
     const queueList = document.getElementById("queue-list");
     const filterCount = document.getElementById("filter-count");
+    const chkQueueSelectAll = document.getElementById("chk-queue-select-all");
 
     // Console Sidebar
     const consoleSidebar = document.getElementById("console-sidebar");
@@ -108,6 +109,17 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    // --- SELECT ALL ---
+    if (chkQueueSelectAll) {
+        chkQueueSelectAll.addEventListener("change", (e) => {
+            const isChecked = e.target.checked;
+            document.querySelectorAll(".queue-chk").forEach(chk => {
+                chk.checked = isChecked;
+            });
+            updateActionBtnState();
+        });
+    }
+
     // --- SETTINGS ---
     function loadSettings() {
         fetch("/api/settings")
@@ -198,6 +210,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function renderQueue() {
         queueList.innerHTML = "";
+        
+        if (chkQueueSelectAll) chkQueueSelectAll.checked = false;
 
         const activeItems = queueData.filter(i => i.status !== "done");
         const completedItems = queueData.filter(i => i.status === "done");
@@ -488,7 +502,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateActionBtnState() {
+        const allChks = document.querySelectorAll(".queue-chk");
         const checked = document.querySelectorAll(".queue-chk:checked");
+        
+        if (chkQueueSelectAll && allChks.length > 0) {
+            chkQueueSelectAll.checked = (allChks.length === checked.length);
+        }
+
         const hasChecked = checked.length > 0;
         btnExportSelected.disabled = !hasChecked;
 

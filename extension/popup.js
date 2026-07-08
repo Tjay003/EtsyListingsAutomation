@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const chkVariation = document.getElementById("chk-variation");
   const chkDescription = document.getElementById("chk-description");
   const chkText = document.getElementById("chk-text");
+  const chkSelectAll = document.getElementById("chk-select-all");
 
   // Badges
   const badgeMain = document.getElementById("badge-main");
@@ -66,6 +67,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     tabBtnGen.classList.remove("active");
     panelSettings.classList.add("active");
     panelGen.classList.remove("active");
+  });
+
+  // Select All Logic
+  const allChecks = [chkMain, chkVariation, chkDescription, chkText];
+  
+  chkSelectAll.addEventListener("change", (e) => {
+    const isChecked = e.target.checked;
+    allChecks.forEach(chk => chk.checked = isChecked);
+  });
+
+  allChecks.forEach(chk => {
+    chk.addEventListener("change", () => {
+      chkSelectAll.checked = allChecks.every(c => c.checked);
+    });
   });
 
   // Helper displays

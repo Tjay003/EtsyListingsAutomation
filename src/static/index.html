@@ -78,6 +78,9 @@
 
                     <!-- Queue Filter Toggle -->
                     <div class="queue-filter-bar">
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; margin-right: 16px;">
+                            <input type="checkbox" id="chk-queue-select-all"> Select All
+                        </label>
                         <button class="filter-pill active" id="filter-active" data-filter="active">Active</button>
                         <button class="filter-pill" id="filter-completed" data-filter="completed">Completed</button>
                         <span class="filter-count" id="filter-count"></span>
@@ -254,6 +257,6 @@
 
         </main>
     </div>
-    <script src="app.js"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>
