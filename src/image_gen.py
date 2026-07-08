@@ -7,14 +7,6 @@ from google import genai
 from google.genai import types
 from src.ai_helper import get_genai_client
 
-def load_themes(config_path="themes.yaml"):
-    """Load the YAML configuration file for themes."""
-    if not os.path.exists(config_path):
-        print(f"Warning: themes config not found at {config_path}. Using basic templates.")
-        return {}
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
 def generate_image_with_fal(prompt, input_image_path, output_path):
     """Generate image-to-image using Fal.ai SDK with FLUX or SDXL."""
     try:
@@ -202,70 +194,6 @@ def analyze_inspo_style(inspo_image_path, client=None):
     except Exception as e:
         print(f"Error analyzing inspiration image: {e}")
         return "minimalist product studio showcase, clean soft lighting, solid neutral backdrop"
-
-def generate_preset_prompts(theme_name, preset_name, product_trigger):
-    """Generate 4 image prompts based on the theme and selected preset (product_staging or fashion_model)."""
-    themes_styles = {
-        "bauhaus_beige": {
-            "bg": "minimalist warm cream-beige cyclorama studio, Bauhaus chrome structures, soft elegant studio lighting",
-            "model_clothing": "a modern model wearing a clean white linen dress, neutral background",
-            "packaging": "minimalist kraft paper box, silk ribbon, soft elegant shadow"
-        },
-        "cottagecore_rustic": {
-            "bg": "rustic weathered wooden surface, dried wildflowers, cozy cottage morning sun filtering through window",
-            "model_clothing": "a model in a floral prairie dress, vintage countryside aesthetic",
-            "packaging": "vintage recycled cardboard box wrapped in twine, dried lavender"
-        },
-        "cyberpunk_neon": {
-            "bg": "dark wet metallic panel reflecting pink and blue neon lights, moody tech-noir atmospheric haze",
-            "model_clothing": "a cool model in a black techwear leather jacket, Tokyo futuristic neon street night background",
-            "packaging": "futuristic matte black box with neon circuit trace accents, soft cyber-glow"
-        }
-    }
-    
-    # Fallback to bauhaus_beige if theme not found
-    style = themes_styles.get(theme_name, themes_styles.get("bauhaus_beige"))
-    
-    p1 = ""
-    p2 = ""
-    p3 = ""
-    p4 = ""
-    
-    # 1. Showcase
-    if preset_name == "fashion_model":
-        p1 = f"A close-up shot of a model's hand elegantly holding the {product_trigger}, {style['bg']}, clean sharp focus, 8k resolution"
-    else: # product_staging
-        p1 = f"{product_trigger} product, professional studio product photography, centered and resting on a geometric concrete pedestal, {style['bg']}, elegant shadows, 8k resolution"
-        
-    # 2. Worn/Used or Second view
-    if preset_name == "fashion_model":
-        p2 = f"Lifestyle portrait of {style['model_clothing']}, styling the {product_trigger}, warm natural lighting, candid magazine depth of field"
-    else: # product_staging
-        p2 = f"{product_trigger} product, lifestyle display, resting flat on a beige linen sheet on a wooden table, {style['bg']}, soft sunny morning shadows"
-        
-    # 3. Detail/Close-up
-    if preset_name == "fashion_model":
-        p3 = f"Macro close-up detailed shot of the {product_trigger} being worn/styled, showing fine textures and craftsmanship, side studio lighting, sharp details"
-    else: # product_staging
-        p3 = f"Macro close-up detailed product shot of the {product_trigger} alone, highlighting raw textures, intricate details, dramatic side lighting, high contrast"
-        
-    # 4. Packaging or Extra
-    if preset_name == "fashion_model":
-        p4 = f"A model's hands unboxing the {product_trigger} from a {style['packaging']}, soft aesthetic lighting, clean commercial feel"
-    else: # product_staging
-        p4 = f"The {product_trigger} product resting beautifully next to its {style['packaging']}, soft ambient shadow overlay, clean studio backdrop"
-
-    return [
-        {"name": "1_showcase", "prompt": p1},
-        {"name": "2_worn_or_used", "prompt": p2},
-        {"name": "3_detail_close_up", "prompt": p3},
-        {"name": "4_packaging_or_extra", "prompt": p4}
-    ]
-
-def roll_theme_prompts(theme_name, themes_config, product_trigger="nanobananapro2", preset_name="product_staging"):
-    """Roll prompts based on theme and preset styling."""
-    import random
-    return generate_preset_prompts(theme_name, preset_name, product_trigger)
 
 def generate_prompts_from_inspo(inspo_style, product_trigger="nanobananapro2"):
     """Generate a custom set of Showcase, Worn, and Detail prompts based on the inspo image analysis."""

@@ -25,8 +25,6 @@ from src.ai_helper import (
     extract_variation_specs
 )
 from src.image_gen import (
-    load_themes,
-    roll_theme_prompts,
     generate_image_with_imagen
 )
 
@@ -378,13 +376,16 @@ def serve_product_image(slug: str, image_path: str):
     raise HTTPException(status_code=404, detail="Image not found")
 
 
+class ImageTaskConfig(BaseModel):
+    target: str
+    prompt: str
+
 class RunPipelineRequest(BaseModel):
     product_slug: str
     mode: str # "listing_only" | "listing_with_images"
-    theme: str = "bauhaus_beige"
-    preset: str = "product_staging"
+    image_tasks: list[ImageTaskConfig] = []
 
-def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
+def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
     try:
         out_root = get_output_dir()
         product_dir = os.path.join(out_root, slug)
@@ -509,26 +510,59 @@ def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
         metadata["etsy_listing"] = etsy_listing
 
         # Image generation if requested
-        if mode == "listing_with_images":
-            streamer.publish({"status": "progress", "message": "Generating style templates..."})
-            ref_image_rel = None
-            if metadata.get("main_images"):
-                ref_image_rel = metadata["main_images"][0]
-            elif metadata.get("variation_images"):
-                first_var = metadata["variation_images"][0]
-                if isinstance(first_var, dict):
-                    ref_image_rel = first_var.get("local_path")
-                else:
-                    ref_image_rel = first_var
-                
-            ref_image = os.path.join(product_dir, ref_image_rel) if ref_image_rel else None
-            reference_input = ref_image if ref_image else desc_input
-            visual_details = generate_image_prompt_details(reference_input, client)
+        if mode == "listing_with_images" and image_tasks:
+            streamer.publish({"status": "progress", "message": "Executing Batch Image Generation tasks..."})
             
-            combined_trigger = f"product, {visual_details}" if visual_details else "product"
-            themes_config = load_themes(os.path.join(os.path.dirname(__file__), "..", "themes.yaml"))
-            prompts_to_run = roll_theme_prompts(theme, themes_config, combined_trigger, preset_name=preset)
-            metadata["prompts"] = prompts_to_run
+            def get_abs_path(rel_or_dict):
+                if isinstance(rel_or_dict, dict):
+                    return os.path.join(product_dir, rel_or_dict.get("local_path"))
+                return os.path.join(product_dir, rel_or_dict)
+            
+            generated_images = []
+            
+            for t_idx, task in enumerate(image_tasks):
+                target_folder = task.get("target", "main_images") if isinstance(task, dict) else task.target
+                prompt_style = task.get("prompt", "") if isinstance(task, dict) else task.prompt
+                
+                target_images = []
+                if target_folder == "first_main":
+                    if metadata.get("main_images"):
+                        target_images = [metadata["main_images"][0]]
+                else:
+                    target_images = metadata.get(target_folder, [])
+                    
+                if not target_images:
+                    streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_folder}, skipping."})
+                    continue
+                    
+                streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: Generating {len(target_images)} images for {target_folder}..."})
+                
+                for img_idx, img_meta in enumerate(target_images):
+                    ref_path = get_abs_path(img_meta)
+                    if not os.path.exists(ref_path):
+                        continue
+                        
+                    visual_details = generate_image_prompt_details(ref_path, client)
+                    combined_trigger = f"product, {visual_details}" if visual_details else "product"
+                    
+                    final_prompt = f"{combined_trigger}, {prompt_style}"
+                    
+                    out_filename = f"gen_{target_folder}_{t_idx}_{img_idx}.png"
+                    out_path = os.path.join(product_dir, out_filename)
+                    
+                    streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."})
+                    
+                    res_path = generate_image_with_imagen(
+                        prompt=final_prompt,
+                        output_path=out_path,
+                        client=client,
+                        reference_image=ref_path
+                    )
+                    
+                    if res_path:
+                        generated_images.append(out_filename)
+            
+            metadata["generated_images"] = generated_images
 
         metadata["status"] = "done"
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -567,7 +601,7 @@ def background_run_pipeline(slug: str, mode: str, theme: str, preset: str):
 
 @app.post("/api/run-pipeline")
 def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.theme, req.preset)
+    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks)
     return {"status": "success", "message": "Pipeline execution started"}
 
 class ExportZipRequest(BaseModel):

@@ -114,17 +114,13 @@
                             </select>
                         </div>
 
-                        <div class="input-group">
-                            <label class="field-label">Theme Preset (For Images)</label>
-                            <select id="theme-selector" class="select-input"></select>
-                        </div>
-
-                        <div class="input-group">
-                            <label class="field-label">Image Generation Preset</label>
-                            <select id="preset-selector" class="select-input">
-                                <option value="product_staging">Product Staging</option>
-                                <option value="fashion_model">Fashion Model</option>
-                            </select>
+                        <!-- IMAGE GENERATION CONFIGURATION -->
+                        <div id="image-gen-config-container" style="display: none; border-top: 1px solid #2e2e2e; padding-top: 16px;">
+                            <label class="field-label" style="margin-bottom: 8px;">Generation Tasks</label>
+                            <div id="image-tasks-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px;">
+                                <!-- Dynamic Tasks Go Here -->
+                            </div>
+                            <button id="btn-add-task" class="secondary-btn" style="width: 100%; border-style: dashed; padding: 6px;">+ Add Generation Task</button>
                         </div>
                         
                         <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>

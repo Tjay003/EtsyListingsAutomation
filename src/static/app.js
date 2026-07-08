@@ -25,8 +25,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const wsProductTitle = document.getElementById("ws-product-title");
     const wsProductSlug = document.getElementById("ws-product-slug");
     const wsPipelineMode = document.getElementById("ws-pipeline-mode");
-    const themeSelector = document.getElementById("theme-selector");
-    const presetSelector = document.getElementById("preset-selector");
+    const imageGenConfigContainer = document.getElementById("image-gen-config-container");
+    const imageTasksList = document.getElementById("image-tasks-list");
+    const btnAddTask = document.getElementById("btn-add-task");
     const btnGenerate = document.getElementById("btn-generate");
 
     const consoleLogs = document.getElementById("console-logs");
@@ -69,7 +70,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- INITIALIZATION ---
     loadSettings();
     loadPresets();
-    loadThemes();
     loadQueue();
     connectStatusStream();
 
@@ -182,18 +182,65 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    function loadThemes() {
-        fetch("/api/themes").then(r => r.json()).then(data => {
-            if (data.themes) {
-                themeSelector.innerHTML = "";
-                data.themes.forEach(theme => {
-                    const option = document.createElement("option");
-                    option.value = theme;
-                    option.textContent = theme.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-                    themeSelector.appendChild(option);
+    // --- IMAGE GENERATION TASKS ---
+    wsPipelineMode.addEventListener("change", () => {
+        if (imageGenConfigContainer) {
+            imageGenConfigContainer.style.display = wsPipelineMode.value === "listing_with_images" ? "block" : "none";
+        }
+    });
+
+    function createTaskRow() {
+        const row = document.createElement("div");
+        row.className = "task-row";
+        row.style.cssText = "display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #333; border-radius: 6px; position: relative;";
+        
+        row.innerHTML = `
+            <button class="remove-task-btn" title="Remove Task" style="position: absolute; top: 8px; right: 8px; background: none; border: none; color: #ff4d4d; cursor: pointer;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+            <div class="input-group" style="margin-bottom: 0;">
+                <label class="field-label" style="font-size: 11px;">Target Folder/Images</label>
+                <select class="select-input task-target">
+                    <option value="main_images">Main Images</option>
+                    <option value="first_main">First Main Image Only</option>
+                    <option value="variation_images">Variations</option>
+                    <option value="description_images">Description Images</option>
+                </select>
+            </div>
+            <div class="input-group" style="margin-bottom: 0;">
+                <label class="field-label" style="font-size: 11px;">Prompt Style</label>
+                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting..."></textarea>
+            </div>
+        `;
+        
+        row.querySelector(".remove-task-btn").addEventListener("click", () => {
+            row.remove();
+        });
+        
+        return row;
+    }
+
+    if (btnAddTask) {
+        btnAddTask.addEventListener("click", () => {
+            if (imageTasksList) {
+                imageTasksList.appendChild(createTaskRow());
+            }
+        });
+    }
+
+    function getImageTasks() {
+        if (!imageTasksList) return [];
+        const tasks = [];
+        imageTasksList.querySelectorAll(".task-row").forEach(row => {
+            const prompt = row.querySelector(".task-prompt").value.trim();
+            if (prompt) {
+                tasks.push({
+                    target: row.querySelector(".task-target").value,
+                    prompt: prompt
                 });
             }
         });
+        return tasks;
     }
 
     // --- QUEUE MANAGEMENT ---
@@ -575,9 +622,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
                         product_slug: slug,
-                        mode: "listing_only",
-                        theme: themeSelector.value || "bauhaus_beige",
-                        preset: presetSelector.value || "product_staging"
+                        mode: wsPipelineMode.value,
+                        image_tasks: wsPipelineMode.value === "listing_with_images" ? getImageTasks() : []
                     })
                 });
                 // Wait for the SSE "done" or "error" event for this slug before continuing
@@ -646,9 +692,8 @@ document.addEventListener("DOMContentLoaded", () => {
             populateWorkspace();
             populateVariationSpecs(item);
 
-            if (item.prompts) {
-                const varImgs = (item.variation_images || []).map(v => typeof v === 'object' ? v.local_path : v);
-                renderPromptCards(item.prompts, item.slug, [...(item.main_images || []), ...varImgs, ...(item.description_images || [])]);
+            if (item.generated_images) {
+                renderGeneratedImages(item.generated_images, item.slug);
             }
         } else {
             // Reset workspace
@@ -677,8 +722,7 @@ document.addEventListener("DOMContentLoaded", () => {
             body: JSON.stringify({
                 product_slug: slug,
                 mode: wsPipelineMode.value,
-                theme: themeSelector.value,
-                preset: presetSelector.value
+                image_tasks: wsPipelineMode.value === "listing_with_images" ? getImageTasks() : []
             })
         });
     });
@@ -717,13 +761,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         }
                     });
                 }
-                if (data.prompts) {
-                    let refImgs = [];
-                    if (selectedQueueItem) {
-                        const varImgs = (selectedQueueItem.variation_images || []).map(v => typeof v === 'object' ? v.local_path : v);
-                        refImgs = [...(selectedQueueItem.main_images||[]), ...varImgs];
-                    }
-                    renderPromptCards(data.prompts, data.output_dir_name, refImgs);
+                if (data.generated_images) {
+                    renderGeneratedImages(data.generated_images, data.output_dir_name);
                 }
             } else if (data.status === "queue_updated") {
                 loadQueue();
@@ -820,69 +859,25 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    function renderPromptCards(prompts, slug, refImages) {
+    function renderGeneratedImages(images, slug) {
         imagesGrid.innerHTML = "";
-        if (!prompts || prompts.length === 0) {
+        if (!images || images.length === 0) {
             imagesGrid.innerHTML = `<div class="image-placeholder">No images generated.</div>`;
             return;
         }
 
-        prompts.forEach((item) => {
+        images.forEach((imgFile) => {
             const card = document.createElement("div");
             card.className = "prompt-card";
 
             const imgWrap = document.createElement("div");
             imgWrap.className = "prompt-card-img-wrapper";
             const img = document.createElement("img");
-            img.style.display = "none";
+            img.src = \`/api/product-image/\${slug}/\${encodeURIComponent(imgFile)}?t=\${Date.now()}\`;
+            img.style.display = "block";
+            
             imgWrap.appendChild(img);
-
-            const content = document.createElement("div");
-            content.className = "prompt-card-content";
-
-            const p = document.createElement("textarea");
-            p.className = "prompt-card-textarea";
-            p.value = item.prompt;
-
-            const btn = document.createElement("button");
-            btn.className = "primary-btn btn-sm";
-            btn.textContent = "Generate (Fal.ai)";
-
-            btn.addEventListener("click", () => {
-                btn.textContent = "Generating...";
-                btn.disabled = true;
-
-                const ref = refImages && refImages.length > 0 ? refImages[0].split("/").pop() : "scraped_1.png";
-
-                fetch("/api/generate-image", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({
-                        prompt: p.value,
-                        output_dir_name: slug,
-                        image_name: `${item.name}.png`,
-                        reference_image: ref
-                    })
-                }).then(r => r.json()).then(res => {
-                    if (res.status === "success") {
-                        img.src = res.image_url + "?t=" + Date.now();
-                        img.style.display = "block";
-                        btn.textContent = "Regenerate";
-                    } else {
-                        throw new Error("Failed");
-                    }
-                    btn.disabled = false;
-                }).catch(() => {
-                    alert("Generation failed");
-                    btn.textContent = "Retry";
-                    btn.disabled = false;
-                });
-            });
-
-            content.appendChild(p);
-            content.appendChild(btn);
             card.appendChild(imgWrap);
-            card.appendChild(content);
             imagesGrid.appendChild(card);
         });
     }
