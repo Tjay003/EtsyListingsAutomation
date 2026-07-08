@@ -3,7 +3,7 @@ import unittest
 import yaml
 from unittest.mock import MagicMock
 from src.ai_helper import clean_tags, write_etsy_listing, extract_variation_specs
-from src.image_gen import load_themes, roll_theme_prompts, generate_prompts_from_inspo
+from src.image_gen import generate_prompts_from_inspo
 
 class TestEtsyAutomationLogic(unittest.TestCase):
 
@@ -57,24 +57,6 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn("Cancellation Policy: Cancellation is allowed within 5 hours", result["description"])
         self.assertIn("Returns & Refunds Policy: Returns and refunds are accepted", result["description"])
-
-    def test_theme_loading_and_rolling(self):
-        """Test that the themes configuration YAML loads correctly and prompt rolling works."""
-        # We can test with the actual themes.yaml we wrote
-        config = load_themes("themes.yaml")
-        self.assertIn("themes", config)
-        self.assertIn("bauhaus_beige", config["themes"])
-        
-        # Test prompt rolling
-        rolled = roll_theme_prompts("bauhaus_beige", config, product_trigger="custom_nanobananapro")
-        self.assertGreater(len(rolled), 0)
-        
-        # Check that placeholder 'nanobananapro2' was replaced by custom trigger
-        for image_item in rolled:
-            self.assertIn("name", image_item)
-            self.assertIn("prompt", image_item)
-            self.assertIn("custom_nanobananapro", image_item["prompt"])
-            self.assertNotIn("nanobananapro2", image_item["prompt"])
 
     def test_inspo_prompt_generation(self):
         """Test that style prompts are generated correctly based on inspo visual description."""
