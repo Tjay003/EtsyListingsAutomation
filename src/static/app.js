@@ -873,7 +873,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const imgWrap = document.createElement("div");
             imgWrap.className = "prompt-card-img-wrapper";
             const img = document.createElement("img");
-            img.src = \`/api/product-image/\${slug}/\${encodeURIComponent(imgFile)}?t=\${Date.now()}\`;
+            img.src = `/api/product-image/${slug}/${encodeURIComponent(imgFile)}?t=${Date.now()}`;
             img.style.display = "block";
             
             imgWrap.appendChild(img);
