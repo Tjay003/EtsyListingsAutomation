@@ -182,36 +182,137 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // --- IMAGE GENERATION TASKS ---
+    // --- IMAGE GENERATION TASKS & PRESETS ---
+    const presetSelector = document.getElementById("preset-selector");
+    const btnSavePreset = document.getElementById("btn-save-preset");
+    const btnDeletePreset = document.getElementById("btn-delete-preset");
+    const btnAddBatchTask = document.getElementById("btn-add-batch-task");
+    const btnAddIndividualTask = document.getElementById("btn-add-individual-task");
+    
+    function loadGenerationPresets() {
+        if (!presetSelector) return;
+        fetch("/api/generation-presets")
+            .then(r => r.json())
+            .then(data => {
+                window.generationPresets = data;
+                const currentVal = presetSelector.value;
+                presetSelector.innerHTML = '<option value="">-- Load a Preset --</option>';
+                for (const name in data) {
+                    const opt = document.createElement("option");
+                    opt.value = name;
+                    opt.textContent = name;
+                    presetSelector.appendChild(opt);
+                }
+                if (data[currentVal]) presetSelector.value = currentVal;
+            })
+            .catch(console.error);
+    }
+    
+    if (presetSelector) {
+        loadGenerationPresets();
+        
+        presetSelector.addEventListener("change", () => {
+            const presetName = presetSelector.value;
+            if (!presetName || !window.generationPresets[presetName]) return;
+            const preset = window.generationPresets[presetName];
+            
+            wsPipelineMode.value = preset.mode || "listing_only";
+            wsPipelineMode.dispatchEvent(new Event("change"));
+            
+            if (imageTasksList) {
+                imageTasksList.innerHTML = "";
+                if (preset.image_tasks) {
+                    preset.image_tasks.forEach(task => {
+                        imageTasksList.appendChild(createTaskRow(task.task_type || "batch", task.target, task.prompt));
+                    });
+                }
+            }
+        });
+        
+        btnSavePreset.addEventListener("click", () => {
+            const name = prompt("Enter a name for this Generation Preset:");
+            if (!name) return;
+            
+            const payload = {
+                name: name,
+                mode: wsPipelineMode.value,
+                image_tasks: getImageTasks()
+            };
+            
+            fetch("/api/generation-presets", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            }).then(() => loadGenerationPresets());
+        });
+        
+        btnDeletePreset.addEventListener("click", () => {
+            const name = presetSelector.value;
+            if (!name) return alert("Select a preset to delete first.");
+            if (!confirm(`Delete preset '${name}'?`)) return;
+            
+            fetch("/api/generation-presets/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: name })
+            }).then(() => {
+                presetSelector.value = "";
+                loadGenerationPresets();
+            });
+        });
+    }
+
     wsPipelineMode.addEventListener("change", () => {
         if (imageGenConfigContainer) {
             imageGenConfigContainer.style.display = wsPipelineMode.value === "listing_with_images" ? "block" : "none";
         }
     });
 
-    function createTaskRow() {
+    function createTaskRow(type = "batch", targetVal = "", promptVal = "") {
         const row = document.createElement("div");
         row.className = "task-row";
-        row.style.cssText = "display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #333; border-radius: 6px; position: relative;";
+        row.dataset.taskType = type;
+        const borderColor = type === "individual" ? "#4a90e2" : "#333";
+        const titleText = type === "individual" ? "Individual Task (Single Reference)" : "Batch Task (Folder Loop)";
+        row.style.cssText = `display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid ${borderColor}; border-radius: 6px; position: relative;`;
+        
+        let targetOptions = "";
+        if (type === "individual") {
+            targetOptions = `
+                <option value="first_variation">1st Variation Image</option>
+                <option value="first_main">1st Main Image</option>
+                <option value="first_description">1st Description Image</option>
+            `;
+        } else {
+            targetOptions = `
+                <option value="variation_images">Variations</option>
+                <option value="main_images">Main Images</option>
+                <option value="description_images">Description Images</option>
+            `;
+        }
         
         row.innerHTML = `
+            <div style="font-size: 11px; font-weight: bold; color: ${borderColor}; position: absolute; top: -8px; left: 12px; background: #1e1e1e; padding: 0 4px;">${titleText}</div>
             <button class="remove-task-btn" title="Remove Task" style="position: absolute; top: 8px; right: 8px; background: none; border: none; color: #ff4d4d; cursor: pointer;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
-            <div class="input-group" style="margin-bottom: 0;">
-                <label class="field-label" style="font-size: 11px;">Target Folder/Images</label>
+            <div class="input-group" style="margin-bottom: 0; margin-top: 8px;">
+                <label class="field-label" style="font-size: 11px;">${type === "individual" ? "Target Reference" : "Target Folder"}</label>
                 <select class="select-input task-target">
-                    <option value="main_images">Main Images</option>
-                    <option value="first_main">First Main Image Only</option>
-                    <option value="variation_images">Variations</option>
-                    <option value="description_images">Description Images</option>
+                    ${targetOptions}
                 </select>
             </div>
             <div class="input-group" style="margin-bottom: 0;">
                 <label class="field-label" style="font-size: 11px;">Prompt Style</label>
-                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting..."></textarea>
+                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting...">${promptVal}</textarea>
             </div>
         `;
+        
+        if (targetVal) {
+            const select = row.querySelector(".task-target");
+            const opt = select.querySelector(`option[value="${targetVal}"]`);
+            if (opt) select.value = targetVal;
+        }
         
         row.querySelector(".remove-task-btn").addEventListener("click", () => {
             row.remove();
@@ -220,11 +321,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return row;
     }
 
-    if (btnAddTask) {
-        btnAddTask.addEventListener("click", () => {
-            if (imageTasksList) {
-                imageTasksList.appendChild(createTaskRow());
-            }
+    if (btnAddBatchTask) {
+        btnAddBatchTask.addEventListener("click", () => {
+            if (imageTasksList) imageTasksList.appendChild(createTaskRow("batch"));
+        });
+    }
+    if (btnAddIndividualTask) {
+        btnAddIndividualTask.addEventListener("click", () => {
+            if (imageTasksList) imageTasksList.appendChild(createTaskRow("individual"));
         });
     }
 
@@ -235,6 +339,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const prompt = row.querySelector(".task-prompt").value.trim();
             if (prompt) {
                 tasks.push({
+                    task_type: row.dataset.taskType,
                     target: row.querySelector(".task-target").value,
                     prompt: prompt
                 });

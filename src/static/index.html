@@ -116,11 +116,25 @@
 
                         <!-- IMAGE GENERATION CONFIGURATION -->
                         <div id="image-gen-config-container" style="display: none; border-top: 1px solid #2e2e2e; padding-top: 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label class="field-label" style="margin-bottom: 0;">Pipeline Presets</label>
+                            </div>
+                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                                <select id="preset-selector" class="select-input" style="flex: 1;">
+                                    <option value="">-- Load a Preset --</option>
+                                </select>
+                                <button id="btn-save-preset" class="secondary-btn" style="padding: 0 10px;" title="Save Current Config">Save</button>
+                                <button id="btn-delete-preset" class="secondary-btn" style="padding: 0 10px; color: #ff6b6b; border-color: #ff6b6b33;" title="Delete Selected Preset">X</button>
+                            </div>
+
                             <label class="field-label" style="margin-bottom: 8px;">Generation Tasks</label>
                             <div id="image-tasks-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px;">
                                 <!-- Dynamic Tasks Go Here -->
                             </div>
-                            <button id="btn-add-task" class="secondary-btn" style="width: 100%; border-style: dashed; padding: 6px;">+ Add Generation Task</button>
+                            <div style="display: flex; gap: 8px;">
+                                <button id="btn-add-batch-task" class="secondary-btn" style="flex: 1; border-style: dashed; padding: 6px; font-size: 12px;">+ Add Batch Task</button>
+                                <button id="btn-add-individual-task" class="secondary-btn" style="flex: 1; border-style: dashed; padding: 6px; font-size: 12px;">+ Add Individual Task</button>
+                            </div>
                         </div>
                         
                         <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>

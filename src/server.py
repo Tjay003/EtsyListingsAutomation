@@ -377,6 +377,7 @@ def serve_product_image(slug: str, image_path: str):
 
 
 class ImageTaskConfig(BaseModel):
+    task_type: str = "batch" # "batch" or "individual"
     target: str
     prompt: str
 
@@ -521,15 +522,24 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
             generated_images = []
             
             for t_idx, task in enumerate(image_tasks):
+                task_type = task.get("task_type", "batch") if isinstance(task, dict) else getattr(task, "task_type", "batch")
                 target_folder = task.get("target", "main_images") if isinstance(task, dict) else task.target
                 prompt_style = task.get("prompt", "") if isinstance(task, dict) else task.prompt
                 
                 target_images = []
-                if target_folder == "first_main":
-                    if metadata.get("main_images"):
+                if task_type == "individual":
+                    if target_folder == "first_main" and metadata.get("main_images"):
                         target_images = [metadata["main_images"][0]]
+                    elif target_folder == "first_variation" and metadata.get("variation_images"):
+                        target_images = [metadata["variation_images"][0]]
+                    elif target_folder == "first_description" and metadata.get("description_images"):
+                        target_images = [metadata["description_images"][0]]
                 else:
-                    target_images = metadata.get(target_folder, [])
+                    if target_folder == "first_main":
+                        if metadata.get("main_images"):
+                            target_images = [metadata["main_images"][0]]
+                    else:
+                        target_images = metadata.get(target_folder, [])
                     
                 if not target_images:
                     streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_folder}, skipping."})
@@ -687,6 +697,55 @@ def save_listing(req: ListingSaveRequest):
         return {"status": "success", "message": "Listing saved successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+GENERATION_PRESETS_FILE = os.path.join(os.path.dirname(__file__), "..", "pipeline_presets.json")
+
+class GenerationPreset(BaseModel):
+    name: str
+    mode: str
+    image_tasks: list[ImageTaskConfig]
+
+@app.get("/api/generation-presets")
+def get_generation_presets():
+    if os.path.exists(GENERATION_PRESETS_FILE):
+        with open(GENERATION_PRESETS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+@app.post("/api/generation-presets")
+def save_generation_preset(preset: GenerationPreset):
+    presets = {}
+    if os.path.exists(GENERATION_PRESETS_FILE):
+        with open(GENERATION_PRESETS_FILE, "r", encoding="utf-8") as f:
+            try:
+                presets = json.load(f)
+            except json.JSONDecodeError:
+                pass
+    presets[preset.name] = {
+        "mode": preset.mode,
+        "image_tasks": [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in preset.image_tasks]
+    }
+    with open(GENERATION_PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(presets, f, indent=4)
+    return {"status": "success"}
+
+class DeletePresetRequest(BaseModel):
+    name: str
+
+@app.post("/api/generation-presets/delete")
+def delete_generation_preset(req: DeletePresetRequest):
+    presets = {}
+    if os.path.exists(GENERATION_PRESETS_FILE):
+        with open(GENERATION_PRESETS_FILE, "r", encoding="utf-8") as f:
+            try:
+                presets = json.load(f)
+            except json.JSONDecodeError:
+                pass
+    if req.name in presets:
+        del presets[req.name]
+        with open(GENERATION_PRESETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(presets, f, indent=4)
+    return {"status": "success"}
 
 # Mount web static directory
 static_dir = os.path.join(os.path.dirname(__file__), "static")
