@@ -67,6 +67,103 @@ document.addEventListener("DOMContentLoaded", () => {
     let isBulkRunning = false;
     let pipelineRunning = false;
 
+    const modal = document.getElementById("app-modal");
+    const modalTitle = document.getElementById("modal-title");
+    const modalMessage = document.getElementById("modal-message");
+    const modalInputWrap = document.getElementById("modal-input-wrap");
+    const modalInputLabel = document.getElementById("modal-input-label");
+    const modalInput = document.getElementById("modal-input");
+    const modalClose = document.getElementById("modal-close");
+    const modalCancel = document.getElementById("modal-cancel");
+    const modalConfirm = document.getElementById("modal-confirm");
+
+    function openModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false, input = null, hideCancel = false }) {
+        return new Promise(resolve => {
+            let resolved = false;
+
+            const cleanup = (value) => {
+                if (resolved) return;
+                resolved = true;
+                modal.hidden = true;
+                modalConfirm.classList.remove("danger-btn");
+                modalConfirm.classList.add("primary-btn");
+                modalConfirm.removeEventListener("click", onConfirm);
+                modalCancel.removeEventListener("click", onCancel);
+                modalClose.removeEventListener("click", onCancel);
+                modal.removeEventListener("click", onOverlayClick);
+                document.removeEventListener("keydown", onKeydown);
+                resolve(value);
+            };
+
+            const onConfirm = () => {
+                if (input) {
+                    const value = modalInput.value.trim();
+                    if (!value) {
+                        modalInput.focus();
+                        return;
+                    }
+                    cleanup(value);
+                    return;
+                }
+                cleanup(true);
+            };
+            const onCancel = () => cleanup(input ? null : false);
+            const onOverlayClick = (event) => {
+                if (event.target === modal) onCancel();
+            };
+            const onKeydown = (event) => {
+                if (event.key === "Escape") onCancel();
+                if (event.key === "Enter" && input && document.activeElement === modalInput) onConfirm();
+            };
+
+            modalTitle.textContent = title;
+            modalMessage.textContent = message || "";
+            modalConfirm.textContent = confirmText;
+            modalCancel.textContent = cancelText;
+            modalCancel.hidden = hideCancel;
+
+            if (danger) {
+                modalConfirm.classList.remove("primary-btn");
+                modalConfirm.classList.add("danger-btn");
+            }
+
+            if (input) {
+                modalInputWrap.hidden = false;
+                modalInputLabel.textContent = input.label || "Name";
+                modalInput.value = input.value || "";
+                modalInput.placeholder = input.placeholder || "";
+            } else {
+                modalInputWrap.hidden = true;
+                modalInput.value = "";
+            }
+
+            modal.hidden = false;
+            modalConfirm.addEventListener("click", onConfirm);
+            modalCancel.addEventListener("click", onCancel);
+            modalClose.addEventListener("click", onCancel);
+            modal.addEventListener("click", onOverlayClick);
+            document.addEventListener("keydown", onKeydown);
+
+            setTimeout(() => {
+                if (input) {
+                    modalInput.focus();
+                    modalInput.select();
+                } else {
+                    modalConfirm.focus();
+                }
+            }, 0);
+        });
+    }
+
+    function showInfoModal(title, message) {
+        return openModal({
+            title,
+            message,
+            confirmText: "OK",
+            hideCancel: true
+        });
+    }
+
     // --- INITIALIZATION ---
     loadSettings();
     loadPresets();
@@ -229,8 +326,18 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
         
-        btnSavePreset.addEventListener("click", () => {
-            const name = prompt("Enter a name for this Generation Preset:");
+        btnSavePreset.addEventListener("click", async (e) => {
+            e.preventDefault();
+            const name = await openModal({
+                title: "Save Pipeline Preset",
+                message: "Name this pipeline setup so you can reuse the same image generation tasks later.",
+                confirmText: "Save Preset",
+                input: {
+                    label: "Preset Name",
+                    placeholder: "e.g. Hero + variation refresh",
+                    value: presetSelector.value || ""
+                }
+            });
             if (!name) return;
             
             const payload = {
@@ -243,13 +350,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
-            }).then(() => loadGenerationPresets());
+            }).then(() => {
+                loadGenerationPresets();
+                presetSelector.value = name;
+            });
         });
         
-        btnDeletePreset.addEventListener("click", () => {
+        btnDeletePreset.addEventListener("click", async (e) => {
+            e.preventDefault();
             const name = presetSelector.value;
-            if (!name) return alert("Select a preset to delete first.");
-            if (!confirm(`Delete preset '${name}'?`)) return;
+            if (!name) {
+                await showInfoModal("No Preset Selected", "Choose a pipeline preset before deleting.");
+                return;
+            }
+            const confirmed = await openModal({
+                title: "Delete Pipeline Preset",
+                message: `Delete "${name}"? This removes the saved preset only; it will not delete products or generated listings.`,
+                confirmText: "Delete Preset",
+                danger: true
+            });
+            if (!confirmed) return;
             
             fetch("/api/generation-presets/delete", {
                 method: "POST",
@@ -262,19 +382,20 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    wsPipelineMode.addEventListener("change", () => {
+    function syncPipelineModeUI() {
         if (imageGenConfigContainer) {
-            imageGenConfigContainer.style.display = wsPipelineMode.value === "listing_with_images" ? "block" : "none";
+            imageGenConfigContainer.classList.toggle("is-visible", wsPipelineMode.value === "listing_with_images");
         }
-    });
+    }
+
+    wsPipelineMode.addEventListener("change", syncPipelineModeUI);
+    syncPipelineModeUI();
 
     function createTaskRow(type = "batch", targetVal = "", promptVal = "") {
         const row = document.createElement("div");
         row.className = "task-row";
         row.dataset.taskType = type;
-        const borderColor = type === "individual" ? "#4a90e2" : "#333";
-        const titleText = type === "individual" ? "Individual Task (Single Reference)" : "Batch Task (Folder Loop)";
-        row.style.cssText = `display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid ${borderColor}; border-radius: 6px; position: relative;`;
+        const titleText = type === "individual" ? "Individual Task" : "Batch Task";
         
         let targetOptions = "";
         if (type === "individual") {
@@ -292,21 +413,22 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         
         row.innerHTML = `
-            <div style="font-size: 11px; font-weight: bold; color: ${borderColor}; position: absolute; top: -8px; left: 12px; background: #1e1e1e; padding: 0 4px;">${titleText}</div>
-            <button class="remove-task-btn" title="Remove Task" style="position: absolute; top: 8px; right: 8px; background: none; border: none; color: #ff4d4d; cursor: pointer;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-            <div class="input-group" style="margin-bottom: 0; margin-top: 8px;">
-                <label class="field-label" style="font-size: 11px;">${type === "individual" ? "Target Reference" : "Target Folder"}</label>
+            <div class="task-row-header">
+                <span class="task-type-badge">${titleText}</span>
+                <button type="button" class="remove-task-btn" title="Remove Task" aria-label="Remove task">Remove</button>
+            </div>
+            <div class="input-group">
+                <label class="field-label">${type === "individual" ? "Target Reference" : "Target Folder"}</label>
                 <select class="select-input task-target">
                     ${targetOptions}
                 </select>
             </div>
-            <div class="input-group" style="margin-bottom: 0;">
-                <label class="field-label" style="font-size: 11px;">Prompt Style</label>
-                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting...">${promptVal}</textarea>
+            <div class="input-group">
+                <label class="field-label">Prompt Style</label>
+                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting..."></textarea>
             </div>
         `;
+        row.querySelector(".task-prompt").value = promptVal || "";
         
         if (targetVal) {
             const select = row.querySelector(".task-target");
@@ -314,7 +436,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (opt) select.value = targetVal;
         }
         
-        row.querySelector(".remove-task-btn").addEventListener("click", () => {
+        row.querySelector(".remove-task-btn").addEventListener("click", (e) => {
+            e.preventDefault();
             row.remove();
         });
         
@@ -322,12 +445,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (btnAddBatchTask) {
-        btnAddBatchTask.addEventListener("click", () => {
+        btnAddBatchTask.addEventListener("click", (e) => {
+            e.preventDefault();
             if (imageTasksList) imageTasksList.appendChild(createTaskRow("batch"));
         });
     }
     if (btnAddIndividualTask) {
-        btnAddIndividualTask.addEventListener("click", () => {
+        btnAddIndividualTask.addEventListener("click", (e) => {
+            e.preventDefault();
             if (imageTasksList) imageTasksList.appendChild(createTaskRow("individual"));
         });
     }
@@ -510,31 +635,37 @@ document.addEventListener("DOMContentLoaded", () => {
         const btnDelete = document.createElement("button");
         btnDelete.className = "danger-btn";
         btnDelete.textContent = "Delete";
-        btnDelete.addEventListener("click", () => {
-            if (confirm(`Are you sure you want to delete "${item.title}"?`)) {
-                btnDelete.disabled = true;
-                btnDelete.textContent = "Deleting...";
-                fetch("/api/delete-queue-item", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ slug: item.slug })
-                })
-                .then(r => r.json())
-                .then(res => {
-                    if (res.status === "success") {
-                        loadQueue();
-                    } else {
-                        alert(res.detail || "Failed to delete item.");
-                        btnDelete.disabled = false;
-                        btnDelete.textContent = "Delete";
-                    }
-                })
-                .catch(err => {
-                    alert("Error: " + err.message);
+        btnDelete.addEventListener("click", async () => {
+            const confirmed = await openModal({
+                title: "Delete Queue Item",
+                message: `Delete "${item.title}" and its downloaded assets from the queue? This cannot be undone.`,
+                confirmText: "Delete Item",
+                danger: true
+            });
+            if (!confirmed) return;
+
+            btnDelete.disabled = true;
+            btnDelete.textContent = "Deleting...";
+            fetch("/api/delete-queue-item", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ slug: item.slug })
+            })
+            .then(r => r.json())
+            .then(async res => {
+                if (res.status === "success") {
+                    loadQueue();
+                } else {
+                    await showInfoModal("Delete Failed", res.detail || "Failed to delete item.");
                     btnDelete.disabled = false;
                     btnDelete.textContent = "Delete";
-                });
-            }
+                }
+            })
+            .catch(async err => {
+                await showInfoModal("Delete Failed", err.message);
+                btnDelete.disabled = false;
+                btnDelete.textContent = "Delete";
+            });
         });
         return btnDelete;
     }
@@ -695,8 +826,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             btnExportSelected.textContent = "Export ZIP";
             btnExportSelected.disabled = false;
-        }).catch(err => {
-            alert(err.message);
+        }).catch(async err => {
+            await showInfoModal("Export Failed", err.message);
             btnExportSelected.textContent = "Export ZIP";
             btnExportSelected.disabled = false;
         });
@@ -1041,11 +1172,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 output_dir_name: activeListing.slug,
                 variation_images: updatedVars.length > 0 ? updatedVars : null
             })
-        }).then(r => r.json()).then(res => {
+        }).then(r => r.json()).then(async res => {
             btnSave.textContent = "Save Updates";
             btnSave.disabled = false;
             if (res.status === "success") {
-                alert("Saved to metadata.json!");
+                await showInfoModal("Listing Saved", "Saved updates to metadata.json.");
                 if (selectedQueueItem) {
                     selectedQueueItem.variation_images = updatedVars;
                 }

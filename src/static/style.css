@@ -155,8 +155,10 @@ body {
 }
 .main-panel.active.flex-panel {
     display: flex;
-    gap: 32px;
+    gap: 24px;
     flex-direction: row;
+    min-width: 0;
+    overflow: hidden;
 }
 
 /* CARDS */
@@ -171,6 +173,31 @@ body {
 }
 .full-height {
     height: 100%;
+}
+
+.left-panel {
+    width: 360px;
+    min-width: 320px;
+    max-width: 400px;
+    flex: 0 0 360px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.panel-card {
+    height: 100%;
+    min-height: 0;
+    padding: 24px;
+    gap: 0;
+    overflow-y: auto;
+}
+
+.workspace-card {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
 }
 
 .panel-title {
@@ -202,6 +229,169 @@ body {
 .header-actions {
     display: flex;
     gap: 12px;
+}
+
+/* PIPELINE CONTROL */
+.image-gen-config {
+    display: none !important;
+    border-top: 2px solid var(--bg-canvas);
+    padding-top: 18px;
+    margin-top: 2px;
+    min-height: 0;
+}
+
+.image-gen-config.is-visible {
+    display: block !important;
+}
+
+.pipeline-subheader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.preset-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: stretch;
+    margin-bottom: 16px;
+}
+
+.preset-select {
+    grid-column: 1 / -1;
+    min-width: 0;
+}
+
+.compact-btn,
+.preset-delete-btn {
+    min-height: 38px;
+    padding: 8px 12px;
+    box-shadow: 2px 2px 0px var(--primary);
+    width: 100%;
+}
+
+.preset-delete-btn {
+    color: var(--accent-red);
+    border-color: var(--accent-red);
+}
+
+.preset-delete-btn:hover:not(:disabled) {
+    background: var(--accent-red);
+    color: #fff;
+}
+
+.task-section-label {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.image-tasks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: min(300px, 34vh);
+    overflow-y: auto;
+    padding: 2px 4px 2px 0;
+    margin-bottom: 12px;
+}
+
+.task-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.dashed-btn {
+    border-style: dashed;
+    padding: 8px 10px;
+    font-size: 12px;
+    min-height: 38px;
+    box-shadow: none;
+}
+
+.task-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-canvas);
+}
+
+.task-row[data-task-type="individual"] {
+    border-color: var(--accent-blue);
+}
+
+.task-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.task-type-badge {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    padding: 3px 8px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--primary);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.task-row[data-task-type="individual"] .task-type-badge {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+.remove-task-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: 30px;
+    padding: 0 8px;
+    border: 1.5px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--accent-red);
+    font-family: var(--font-stack);
+    font-size: 11px;
+    font-weight: 800;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.remove-task-btn:hover {
+    border-color: var(--accent-red);
+    background: #fff5f5;
+}
+
+.task-row .input-group {
+    margin-bottom: 0;
+    gap: 6px;
+}
+
+.task-prompt {
+    min-height: 64px;
+    resize: vertical;
+    line-height: 1.4;
+}
+
+#btn-generate {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    width: 100%;
+    margin-top: 16px;
 }
 
 /* QUEUE STYLES */
@@ -490,11 +680,30 @@ body {
     overflow-y: auto;
     padding-right: 8px;
     transition: opacity 0.2s ease;
+    position: relative;
 }
 
 .listing-workspace.disabled {
-    opacity: 0.35;
+    opacity: 0.72;
     pointer-events: none;
+}
+
+.listing-workspace.disabled::before {
+    content: "Select a queued or completed product to edit its Etsy listing.";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    color: var(--neutral-grey);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.74);
+    border: 1.5px dashed var(--neutral-grey);
+    border-radius: 8px;
 }
 
 .workspace-split {
@@ -1161,4 +1370,130 @@ body {
 .variation-spec-input:focus {
     border-color: var(--secondary);
     background-color: var(--card-bg);
+}
+
+/* MODAL */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(24, 24, 24, 0.48);
+}
+
+.modal-overlay[hidden] {
+    display: none;
+}
+
+.modal-dialog {
+    width: min(460px, 100%);
+    background: var(--card-bg);
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 6px 6px 0px var(--primary);
+    padding: 22px;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.modal-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--primary);
+}
+
+.modal-close-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-canvas);
+    color: var(--primary);
+    font-family: var(--font-stack);
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.modal-message {
+    color: var(--neutral-grey);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+
+.modal-input-wrap {
+    margin-bottom: 18px;
+}
+
+.modal-input-wrap[hidden] {
+    display: none;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+@media (max-width: 1100px) {
+    .main-panel.active.flex-panel {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .left-panel {
+        width: 100%;
+        max-width: none;
+        flex: none;
+    }
+
+    .panel-card {
+        height: auto;
+    }
+
+    .workspace-card {
+        min-height: 640px;
+    }
+}
+
+@media (max-width: 720px) {
+    .app-main {
+        padding: 16px;
+    }
+
+    .preset-toolbar,
+    .task-actions,
+    .grid-2-col,
+    .workspace-split {
+        grid-template-columns: 1fr;
+        flex-direction: column;
+    }
+
+    .workspace-header,
+    .panel-header-flex {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .modal-actions {
+        flex-direction: column-reverse;
+    }
+
+    .modal-actions .primary-btn,
+    .modal-actions .secondary-btn {
+        width: 100%;
+    }
 }

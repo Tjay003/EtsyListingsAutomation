@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
     <div class="app-container">
@@ -96,7 +96,7 @@
             <section id="panel-workspace" class="main-panel flex-panel">
                 
                 <!-- LEFT SIDE: PIPELINE CONTROL -->
-                <div class="left-panel" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px;">
+                <div class="left-panel">
                     <div class="card panel-card">
                         <h2 class="panel-title">Pipeline Control</h2>
                         
@@ -115,25 +115,25 @@
                         </div>
 
                         <!-- IMAGE GENERATION CONFIGURATION -->
-                        <div id="image-gen-config-container" style="display: none; border-top: 1px solid #2e2e2e; padding-top: 16px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <label class="field-label" style="margin-bottom: 0;">Pipeline Presets</label>
+                        <div id="image-gen-config-container" class="image-gen-config">
+                            <div class="pipeline-subheader">
+                                <label class="field-label">Pipeline Presets</label>
                             </div>
-                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                                <select id="preset-selector" class="select-input" style="flex: 1;">
+                            <div class="preset-toolbar">
+                                <select id="preset-selector" class="select-input preset-select">
                                     <option value="">-- Load a Preset --</option>
                                 </select>
-                                <button id="btn-save-preset" class="secondary-btn" style="padding: 0 10px;" title="Save Current Config">Save</button>
-                                <button id="btn-delete-preset" class="secondary-btn" style="padding: 0 10px; color: #ff6b6b; border-color: #ff6b6b33;" title="Delete Selected Preset">X</button>
+                                <button type="button" id="btn-save-preset" class="secondary-btn compact-btn" title="Save Current Config">Save Preset</button>
+                                <button type="button" id="btn-delete-preset" class="secondary-btn preset-delete-btn" title="Delete Selected Preset">Delete</button>
                             </div>
 
-                            <label class="field-label" style="margin-bottom: 8px;">Generation Tasks</label>
-                            <div id="image-tasks-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px;">
+                            <label class="field-label task-section-label">Generation Tasks</label>
+                            <div id="image-tasks-list" class="image-tasks-list">
                                 <!-- Dynamic Tasks Go Here -->
                             </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button id="btn-add-batch-task" class="secondary-btn" style="flex: 1; border-style: dashed; padding: 6px; font-size: 12px;">+ Add Batch Task</button>
-                                <button id="btn-add-individual-task" class="secondary-btn" style="flex: 1; border-style: dashed; padding: 6px; font-size: 12px;">+ Add Individual Task</button>
+                            <div class="task-actions">
+                                <button type="button" id="btn-add-batch-task" class="secondary-btn dashed-btn">+ Add Batch</button>
+                                <button type="button" id="btn-add-individual-task" class="secondary-btn dashed-btn">+ Add Individual</button>
                             </div>
                         </div>
                         
@@ -142,7 +142,7 @@
                 </div>
 
                 <!-- RIGHT SIDE: EDITOR -->
-                <div class="right-panel card workspace-card" style="flex: 1;">
+                <div class="right-panel card workspace-card">
                     <div class="workspace-header">
                         <h2 class="panel-title">Etsy Listing Editor</h2>
                         <button id="btn-save" class="secondary-btn" disabled>Save Updates</button>
@@ -267,6 +267,23 @@
 
         </main>
     </div>
-    <script src="app.js?v=2"></script>
+    <div id="app-modal" class="modal-overlay" hidden>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div class="modal-header">
+                <h3 id="modal-title" class="modal-title">Confirm Action</h3>
+                <button type="button" id="modal-close" class="modal-close-btn" aria-label="Close">X</button>
+            </div>
+            <p id="modal-message" class="modal-message"></p>
+            <div id="modal-input-wrap" class="modal-input-wrap" hidden>
+                <label id="modal-input-label" class="field-label" for="modal-input">Name</label>
+                <input id="modal-input" class="text-input" type="text">
+            </div>
+            <div class="modal-actions">
+                <button type="button" id="modal-cancel" class="secondary-btn">Cancel</button>
+                <button type="button" id="modal-confirm" class="primary-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+    <script src="app.js?v=4"></script>
 </body>
 </html>
