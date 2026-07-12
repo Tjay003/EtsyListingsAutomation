@@ -57,3 +57,14 @@ AliExpress description data loads dynamically. The Chrome Extension intercepts A
   ```powershell
   .\.venv\Scripts\python -m unittest test_all.py
   ```
+
+---
+
+## Deployment & Friend Testing Direction
+- Prefer **local-first installs** for friends and heavy image generation. The dashboard state is file-backed, so downloaded/generated images and `metadata.json` should live on each user's computer instead of filling hosted storage.
+- Keep `OUTPUT_DIR` outside the repo for friend installs, usually `C:\Users\<Name>\Downloads\AliExpressQueue`, so code updates do not risk product assets.
+- Helper scripts in the repo root support the local workflow:
+  - `setup.bat`: first-time virtualenv/dependency setup.
+  - `start.bat`: starts the local FastAPI dashboard at `http://localhost:8000`.
+  - `update.bat`: runs `git pull` and refreshes dependencies.
+- Railway hosted mode exists for demos/shared staging, using token-isolated workspaces, but it stores images on the server volume. Treat User Tokens as workspace keys, not real authentication.
