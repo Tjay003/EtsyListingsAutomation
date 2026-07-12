@@ -26,6 +26,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const wsProductSlug = document.getElementById("ws-product-slug");
     const wsPipelineMode = document.getElementById("ws-pipeline-mode");
     const imageGenConfigContainer = document.getElementById("image-gen-config-container");
+    const imageModelSelect = document.getElementById("image-model-select");
+    const imageThinkingSelect = document.getElementById("image-thinking-select");
+    const referencePickerContainer = document.getElementById("reference-picker-container");
+    const referenceStatus = document.getElementById("reference-status");
+    const referenceImageGrid = document.getElementById("reference-image-grid");
     const imageTasksList = document.getElementById("image-tasks-list");
     const btnAddTask = document.getElementById("btn-add-task");
     const btnGenerate = document.getElementById("btn-generate");
@@ -285,6 +290,210 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnDeletePreset = document.getElementById("btn-delete-preset");
     const btnAddBatchTask = document.getElementById("btn-add-batch-task");
     const btnAddIndividualTask = document.getElementById("btn-add-individual-task");
+    const defaultImageSettings = {
+        model_key: "flux-kontext-pro",
+        thinking_level: "off"
+    };
+    const defaultPromptPreset = "auto_product_staging";
+    let imageModelOptions = [
+        {
+            key: "flux-kontext-pro",
+            label: "Flux Kontext Pro",
+            supports_thinking: false,
+            recommended_for: "Variation batches and reliable day-to-day listing images."
+        }
+    ];
+    let imageThinkingLevels = [
+        { key: "off", label: "Off", description: "Do not send a thinking parameter." },
+        { key: "minimal", label: "Minimal", description: "Light reasoning for smarter edits." },
+        { key: "high", label: "High", description: "Best for hero/showcase edits." }
+    ];
+    let imagePromptPresets = [
+        {
+            key: "auto_product_staging",
+            label: "Adaptive Product Staging",
+            description: "Creates a polished marketplace-ready product scene with tasteful context."
+        },
+        {
+            key: "auto_lifestyle_model",
+            label: "Modeled By Someone",
+            description: "Show the product worn, held, carried, or used by an appropriate person."
+        },
+        {
+            key: "auto_in_use",
+            label: "In Use",
+            description: "Show the product actively being used in the most likely real-world context."
+        },
+        {
+            key: "clean_catalog",
+            label: "Clean Catalog Hero",
+            description: "A simple ecommerce hero shot with better lighting and a clean background."
+        },
+        {
+            key: "detail_closeup",
+            label: "Detail Close-up",
+            description: "A closer product detail shot focused on texture, material, finish, or craftsmanship."
+        },
+        {
+            key: "gift_unboxing",
+            label: "Gift / Unboxing",
+            description: "Show the product in a giftable unboxing or premium packaging scene."
+        },
+        {
+            key: "luxury_editorial_plinth",
+            label: "Luxury Editorial Plinth",
+            description: "A high-end editorial product shot on a minimalist geometric plinth."
+        }
+    ];
+
+    function getImageSettings() {
+        const modelKey = imageModelSelect ? imageModelSelect.value : defaultImageSettings.model_key;
+        const thinkingLevel = imageThinkingSelect ? imageThinkingSelect.value : defaultImageSettings.thinking_level;
+        return {
+            model_key: modelKey,
+            thinking_level: supportsModelThinking(modelKey) ? thinkingLevel : "off"
+        };
+    }
+
+    function setImageSettings(settings = {}) {
+        const next = {
+            model_key: settings.model_key || defaultImageSettings.model_key,
+            thinking_level: settings.thinking_level || defaultImageSettings.thinking_level
+        };
+
+        if (imageModelSelect) {
+            const option = imageModelSelect.querySelector(`option[value="${next.model_key}"]`);
+            imageModelSelect.value = option ? next.model_key : defaultImageSettings.model_key;
+        }
+        if (imageThinkingSelect) {
+            const option = imageThinkingSelect.querySelector(`option[value="${next.thinking_level}"]`);
+            imageThinkingSelect.value = option ? next.thinking_level : defaultImageSettings.thinking_level;
+        }
+        syncGlobalThinkingUI();
+    }
+
+    function loadImageGenerationOptions() {
+        if (!imageModelSelect) return Promise.resolve();
+
+        const current = getImageSettings();
+        return fetch("/api/image-generation-options")
+            .then(r => r.json())
+            .then(data => {
+                defaultImageSettings.model_key = data.default_model_key || defaultImageSettings.model_key;
+                imageModelOptions = data.models && data.models.length ? data.models : imageModelOptions;
+                imageThinkingLevels = data.thinking_levels && data.thinking_levels.length ? data.thinking_levels : imageThinkingLevels;
+
+                imageModelSelect.innerHTML = "";
+                imageModelOptions.forEach(model => {
+                    const option = document.createElement("option");
+                    option.value = model.key;
+                    option.textContent = model.key === data.default_model_key ? `${model.label} (Default)` : model.label;
+                    imageModelSelect.appendChild(option);
+                });
+                if (imageThinkingSelect) {
+                    imageThinkingSelect.innerHTML = buildThinkingLevelOptions(current.thinking_level || defaultImageSettings.thinking_level);
+                }
+
+                setImageSettings({
+                    model_key: current.model_key || defaultImageSettings.model_key,
+                    thinking_level: current.thinking_level || defaultImageSettings.thinking_level
+                });
+            })
+            .catch(() => setImageSettings(defaultImageSettings));
+    }
+
+    function getImageModelOption(key) {
+        return imageModelOptions.find(model => model.key === key);
+    }
+
+    function supportsModelThinking(key) {
+        return Boolean(getImageModelOption(key)?.supports_thinking);
+    }
+
+    function buildModelOptions(selectedKey = "", includeInherit = false) {
+        const options = [];
+        if (includeInherit) {
+            options.push(`<option value=""${selectedKey ? "" : " selected"}>Use global model</option>`);
+        }
+        imageModelOptions.forEach(model => {
+            const selected = model.key === selectedKey ? " selected" : "";
+            options.push(`<option value="${model.key}"${selected}>${model.label}</option>`);
+        });
+        return options.join("");
+    }
+
+    function buildThinkingLevelOptions(selectedKey = "off", includeInherit = false) {
+        const options = [];
+        if (includeInherit) {
+            options.push(`<option value="inherit"${!selectedKey || selectedKey === "inherit" ? " selected" : ""}>Use global/default</option>`);
+        }
+        imageThinkingLevels.forEach(level => {
+            const selected = level.key === selectedKey ? " selected" : "";
+            options.push(`<option value="${level.key}"${selected}>${level.label}</option>`);
+        });
+        return options.join("");
+    }
+
+    function syncGlobalThinkingUI() {
+        if (!imageThinkingSelect || !imageModelSelect) return;
+        const supportsThinking = supportsModelThinking(imageModelSelect.value);
+        imageThinkingSelect.disabled = !supportsThinking;
+        imageThinkingSelect.closest(".input-group")?.classList.toggle("is-muted", !supportsThinking);
+        if (!supportsThinking) {
+            imageThinkingSelect.value = "off";
+        }
+        syncAllTaskModelUI();
+    }
+
+    if (imageModelSelect) {
+        imageModelSelect.addEventListener("change", syncGlobalThinkingUI);
+    }
+
+    if (imageThinkingSelect) {
+        imageThinkingSelect.addEventListener("change", syncAllTaskModelUI);
+    }
+
+    function loadImagePromptPresets() {
+        return fetch("/api/image-prompt-presets")
+            .then(r => r.json())
+            .then(data => {
+                if (Array.isArray(data.presets) && data.presets.length > 0) {
+                    imagePromptPresets = data.presets;
+                }
+            })
+            .catch(() => {});
+    }
+
+    function buildPromptPresetOptions(selectedKey = defaultPromptPreset) {
+        return imagePromptPresets.map(preset => {
+            const selected = preset.key === selectedKey ? " selected" : "";
+            return `<option value="${preset.key}"${selected}>${preset.label}</option>`;
+        }).join("");
+    }
+
+    function getPromptPresetDescription(key) {
+        return imagePromptPresets.find(preset => preset.key === key)?.description || "";
+    }
+
+    function applyGenerationPreset(presetName) {
+        if (!presetName || !window.generationPresets || !window.generationPresets[presetName]) return false;
+        const preset = window.generationPresets[presetName];
+
+        wsPipelineMode.value = preset.mode || "listing_only";
+        wsPipelineMode.dispatchEvent(new Event("change"));
+        setImageSettings(preset.image_settings);
+
+        if (imageTasksList) {
+            imageTasksList.innerHTML = "";
+            if (preset.image_tasks) {
+                preset.image_tasks.forEach(task => {
+                    imageTasksList.appendChild(createTaskRow(task.task_type || "batch", task.target, task));
+                });
+            }
+        }
+
+        return true;
+    }
     
     function loadGenerationPresets() {
         if (!presetSelector) return;
@@ -300,30 +509,22 @@ document.addEventListener("DOMContentLoaded", () => {
                     opt.textContent = name;
                     presetSelector.appendChild(opt);
                 }
-                if (data[currentVal]) presetSelector.value = currentVal;
+                if (data[currentVal]) {
+                    presetSelector.value = currentVal;
+                } else if (data.default && imageTasksList && imageTasksList.children.length === 0) {
+                    presetSelector.value = "default";
+                    applyGenerationPreset("default");
+                }
             })
             .catch(console.error);
     }
     
     if (presetSelector) {
-        loadGenerationPresets();
+        Promise.all([loadImageGenerationOptions(), loadImagePromptPresets()]).then(loadGenerationPresets);
         
         presetSelector.addEventListener("change", () => {
             const presetName = presetSelector.value;
-            if (!presetName || !window.generationPresets[presetName]) return;
-            const preset = window.generationPresets[presetName];
-            
-            wsPipelineMode.value = preset.mode || "listing_only";
-            wsPipelineMode.dispatchEvent(new Event("change"));
-            
-            if (imageTasksList) {
-                imageTasksList.innerHTML = "";
-                if (preset.image_tasks) {
-                    preset.image_tasks.forEach(task => {
-                        imageTasksList.appendChild(createTaskRow(task.task_type || "batch", task.target, task.prompt));
-                    });
-                }
-            }
+            applyGenerationPreset(presetName);
         });
         
         btnSavePreset.addEventListener("click", async (e) => {
@@ -343,7 +544,8 @@ document.addEventListener("DOMContentLoaded", () => {
             const payload = {
                 name: name,
                 mode: wsPipelineMode.value,
-                image_tasks: getImageTasks()
+                image_tasks: getImageTasks(),
+                image_settings: getImageSettings()
             };
             
             fetch("/api/generation-presets", {
@@ -384,22 +586,77 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function syncPipelineModeUI() {
         if (imageGenConfigContainer) {
-            imageGenConfigContainer.classList.toggle("is-visible", wsPipelineMode.value === "listing_with_images");
+            imageGenConfigContainer.classList.toggle("is-visible", isImagePipelineMode());
         }
+    }
+
+    function isImagePipelineMode() {
+        return wsPipelineMode.value === "listing_with_images" || wsPipelineMode.value === "images_only";
     }
 
     wsPipelineMode.addEventListener("change", syncPipelineModeUI);
     syncPipelineModeUI();
 
-    function createTaskRow(type = "batch", targetVal = "", promptVal = "") {
+    function syncTaskPromptModeUI(row) {
+        const modeSelect = row.querySelector(".task-prompt-mode");
+        const presetGroup = row.querySelector(".task-preset-group");
+        const customGroup = row.querySelector(".task-custom-prompt-group");
+        const hint = row.querySelector(".task-preset-hint");
+        const isPreset = modeSelect.value === "preset";
+
+        presetGroup.hidden = !isPreset;
+        customGroup.hidden = isPreset;
+        if (hint) {
+            hint.textContent = getPromptPresetDescription(row.querySelector(".task-prompt-preset").value);
+        }
+    }
+
+    function syncTaskModelUI(row) {
+        const modelSelect = row.querySelector(".task-model-key");
+        const thinkingSelect = row.querySelector(".task-thinking-level");
+        const hint = row.querySelector(".task-model-hint");
+        if (!modelSelect || !thinkingSelect) return;
+
+        const inheritedSettings = getImageSettings();
+        const resolvedModelKey = modelSelect.value || inheritedSettings.model_key;
+        const model = getImageModelOption(resolvedModelKey);
+        const supportsThinking = supportsModelThinking(resolvedModelKey);
+
+        thinkingSelect.disabled = !supportsThinking;
+        thinkingSelect.closest(".input-group")?.classList.toggle("is-muted", !supportsThinking);
+
+        if (supportsThinking && !thinkingSelect.value) {
+            thinkingSelect.value = "inherit";
+        }
+
+        if (hint && model) {
+            const source = modelSelect.value ? model.label : `Global: ${model.label}`;
+            const thinkingNote = supportsThinking ? "Thinking available." : "No thinking mode.";
+            hint.textContent = `${source}. ${model.recommended_for || model.description || ""} ${thinkingNote}`.trim();
+        }
+    }
+
+    function syncAllTaskModelUI() {
+        if (!imageTasksList) return;
+        imageTasksList.querySelectorAll(".task-row").forEach(syncTaskModelUI);
+    }
+
+    function createTaskRow(type = "batch", targetVal = "", taskConfig = {}) {
         const row = document.createElement("div");
         row.className = "task-row";
         row.dataset.taskType = type;
         const titleText = type === "individual" ? "Individual Task" : "Batch Task";
+        const config = typeof taskConfig === "string" ? { prompt: taskConfig } : (taskConfig || {});
+        const promptVal = config.prompt || "";
+        const promptMode = config.prompt_mode || (promptVal ? "custom" : "preset");
+        const promptPreset = config.prompt_preset || defaultPromptPreset;
+        const taskModelKey = config.model_key || "";
+        const taskThinkingLevel = config.thinking_level || "inherit";
         
         let targetOptions = "";
         if (type === "individual") {
             targetOptions = `
+                <option value="selected_reference">Selected Reference Image</option>
                 <option value="first_variation">1st Variation Image</option>
                 <option value="first_main">1st Main Image</option>
                 <option value="first_description">1st Description Image</option>
@@ -424,22 +681,69 @@ document.addEventListener("DOMContentLoaded", () => {
                 </select>
             </div>
             <div class="input-group">
-                <label class="field-label">Prompt Style</label>
-                <textarea class="text-input task-prompt" rows="3" placeholder="e.g. Professional product photography, studio lighting..."></textarea>
+                <label class="field-label">Prompt Type</label>
+                <select class="select-input task-prompt-mode">
+                    <option value="preset">Preset</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <div class="task-model-grid">
+                <div class="input-group">
+                    <label class="field-label">Task Model</label>
+                    <select class="select-input task-model-key">
+                        ${buildModelOptions(taskModelKey, true)}
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label class="field-label">Thinking</label>
+                    <select class="select-input task-thinking-level">
+                        ${buildThinkingLevelOptions(taskThinkingLevel, true)}
+                    </select>
+                </div>
+                <small class="task-model-hint"></small>
+            </div>
+            <div class="input-group task-preset-group">
+                <label class="field-label">Image Preset</label>
+                <select class="select-input task-prompt-preset">
+                    ${buildPromptPresetOptions(promptPreset)}
+                </select>
+                <small class="task-preset-hint"></small>
+            </div>
+            <div class="input-group">
+                <label class="field-label task-custom-prompt-group-label">Custom Prompt</label>
+                <textarea class="text-input task-prompt" rows="3" placeholder="Describe the edit, staging, model, scene, lighting, or background..."></textarea>
             </div>
         `;
+        const customGroup = row.querySelector(".task-prompt").closest(".input-group");
+        customGroup.classList.add("task-custom-prompt-group");
         row.querySelector(".task-prompt").value = promptVal || "";
+        row.querySelector(".task-prompt-mode").value = promptMode === "preset" ? "preset" : "custom";
+        row.querySelector(".task-model-key").value = taskModelKey;
+        row.querySelector(".task-thinking-level").value = taskThinkingLevel;
         
         if (targetVal) {
             const select = row.querySelector(".task-target");
             const opt = select.querySelector(`option[value="${targetVal}"]`);
             if (opt) select.value = targetVal;
         }
+
+        row.querySelector(".task-prompt-mode").addEventListener("change", () => {
+            syncTaskPromptModeUI(row);
+        });
+        row.querySelector(".task-prompt-preset").addEventListener("change", () => {
+            syncTaskPromptModeUI(row);
+        });
+        row.querySelector(".task-model-key").addEventListener("change", () => {
+            syncTaskModelUI(row);
+        });
         
         row.querySelector(".remove-task-btn").addEventListener("click", (e) => {
             e.preventDefault();
             row.remove();
         });
+
+        syncTaskPromptModeUI(row);
+        syncTaskModelUI(row);
         
         return row;
     }
@@ -461,12 +765,18 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!imageTasksList) return [];
         const tasks = [];
         imageTasksList.querySelectorAll(".task-row").forEach(row => {
+            const promptMode = row.querySelector(".task-prompt-mode").value;
+            const promptPreset = row.querySelector(".task-prompt-preset").value;
             const prompt = row.querySelector(".task-prompt").value.trim();
-            if (prompt) {
+            if (promptMode === "preset" || prompt) {
                 tasks.push({
                     task_type: row.dataset.taskType,
                     target: row.querySelector(".task-target").value,
-                    prompt: prompt
+                    prompt_mode: promptMode,
+                    prompt_preset: promptPreset,
+                    prompt: prompt,
+                    model_key: row.querySelector(".task-model-key")?.value || "",
+                    thinking_level: row.querySelector(".task-thinking-level")?.value || "inherit"
                 });
             }
         });
@@ -481,6 +791,13 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => r.json())
             .then(data => {
                 queueData = data.queue || [];
+                if (selectedQueueItem) {
+                    const updatedSelected = queueData.find(item => item.slug === selectedQueueItem.slug);
+                    if (updatedSelected) {
+                        selectedQueueItem = updatedSelected;
+                        renderReferencePicker(selectedQueueItem);
+                    }
+                }
                 renderQueue();
             });
     }
@@ -509,9 +826,9 @@ document.addEventListener("DOMContentLoaded", () => {
         displayItems.forEach(item => {
             const isDone = item.status === "done";
 
-            // Wrapper (needed for inline preview on completed items)
+            // Wrapper for inline reference/listing panels
             const wrapper = document.createElement("div");
-            wrapper.className = isDone ? "queue-item-wrapper" : "";
+            wrapper.className = `queue-item-wrapper ${isDone ? "completed" : "active"}`;
 
             // Row
             const row = document.createElement("div");
@@ -558,6 +875,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             meta.appendChild(statusBadge);
             meta.appendChild(countLabel);
+            if (getPrimaryReferencePath(item)) {
+                addQueueReferenceBadge(meta);
+            }
 
             info.appendChild(title);
             info.appendChild(meta);
@@ -565,6 +885,23 @@ document.addEventListener("DOMContentLoaded", () => {
             // Actions
             const actions = document.createElement("div");
             actions.className = "queue-actions";
+            const referencePanel = buildQueueReferencePanel(item, (updatedItem) => {
+                item.primary_reference_image = updatedItem.primary_reference_image;
+                addQueueReferenceBadge(meta);
+                if (!referencePanel.classList.contains("open")) {
+                    btnReference.textContent = "Change Ref";
+                }
+            });
+            const btnReference = document.createElement("button");
+            btnReference.className = "secondary-btn";
+            btnReference.textContent = getPrimaryReferencePath(item) ? "Change Ref" : "Set Ref";
+            btnReference.addEventListener("click", () => {
+                const isOpen = referencePanel.classList.contains("open");
+                referencePanel.classList.toggle("open", !isOpen);
+                btnReference.textContent = isOpen
+                    ? (getPrimaryReferencePath(item) ? "Change Ref" : "Set Ref")
+                    : "Close Ref";
+            });
 
             if (isDone) {
                 // "View Listing" toggles the inline preview panel
@@ -580,6 +917,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
 
                 actions.appendChild(btnView);
+                actions.appendChild(btnReference);
 
                 // Also allow opening in workspace
                 const btnOpen = document.createElement("button");
@@ -598,6 +936,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 actions.appendChild(btnDelete);
 
                 wrapper.appendChild(row);
+                wrapper.appendChild(referencePanel);
                 wrapper.appendChild(previewPanel);
                 queueList.appendChild(wrapper);
 
@@ -616,6 +955,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const btnDelete = buildDeleteButton(item);
                 btnDelete.disabled = status === "downloading";
 
+                actions.appendChild(btnReference);
                 actions.appendChild(btnOpen);
                 actions.appendChild(btnDelete);
 
@@ -624,7 +964,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 row.appendChild(info);
                 row.appendChild(actions);
 
-                queueList.appendChild(row);
+                wrapper.appendChild(row);
+                wrapper.appendChild(referencePanel);
+                queueList.appendChild(wrapper);
             }
         });
 
@@ -670,10 +1012,265 @@ document.addEventListener("DOMContentLoaded", () => {
         return btnDelete;
     }
 
+    function getProductImageSrc(slug, imagePath, bustCache = false) {
+        const cacheParam = bustCache ? `?t=${Date.now()}` : "";
+        return `/api/product-image/${slug}/${encodeURIComponent(imagePath)}${cacheParam}`;
+    }
+
+    function getImagePath(imageEntry) {
+        if (!imageEntry) return "";
+        if (typeof imageEntry === "object") {
+            return imageEntry.local_path || imageEntry.path || imageEntry.filename || "";
+        }
+        return imageEntry;
+    }
+
+    function renderPreviewGeneratedImages(container, images, slug) {
+        container.innerHTML = "";
+
+        const generatedImages = (Array.isArray(images) ? images : [])
+            .map(getImagePath)
+            .filter(Boolean);
+
+        if (generatedImages.length === 0) {
+            container.innerHTML = `<div class="preview-generated-empty">No generated images yet.</div>`;
+            return;
+        }
+
+        generatedImages.forEach((imagePath, index) => {
+            const src = getProductImageSrc(slug, imagePath, true);
+            const link = document.createElement("a");
+            link.className = "preview-generated-tile";
+            link.href = src;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.title = `Open generated image ${index + 1}`;
+
+            const img = document.createElement("img");
+            img.src = src;
+            img.alt = `Generated image ${index + 1}`;
+            img.loading = "lazy";
+
+            const badge = document.createElement("span");
+            badge.className = "preview-generated-badge";
+            badge.textContent = `${index + 1}`;
+
+            link.appendChild(img);
+            link.appendChild(badge);
+            container.appendChild(link);
+        });
+    }
+
+    function getPrimaryReferencePath(item) {
+        return getImagePath(item?.primary_reference_image);
+    }
+
+    function collectReferenceCandidates(item) {
+        if (!item) return [];
+
+        const candidates = [];
+        const addImages = (images, source, sourceLabel) => {
+            (images || []).forEach((entry, index) => {
+                const localPath = getImagePath(entry);
+                if (!localPath) return;
+                const entryLabel = typeof entry === "object"
+                    ? (entry.alt || entry.title || `${sourceLabel} ${index + 1}`)
+                    : `${sourceLabel} ${index + 1}`;
+                candidates.push({
+                    local_path: localPath,
+                    source,
+                    source_label: sourceLabel,
+                    label: entryLabel,
+                    index: index + 1,
+                });
+            });
+        };
+
+        addImages(item.main_images, "main_images", "Main");
+        addImages(item.variation_images, "variation_images", "Variation");
+        addImages(item.description_images, "description_images", "Description");
+        return candidates;
+    }
+
+    function renderReferenceImageGrid({ item, grid, status, emptyText = "No product selected.", noImagesText = "No downloaded product images found.", onSaved = null }) {
+        if (!grid || !status) return;
+
+        grid.innerHTML = "";
+        if (!item) {
+            status.textContent = "Select a product to choose the source image for AI edits.";
+            grid.innerHTML = `<div class="reference-empty">${emptyText}</div>`;
+            return;
+        }
+
+        const candidates = collectReferenceCandidates(item);
+        const selectedPath = getPrimaryReferencePath(item);
+
+        if (selectedPath) {
+            status.textContent = "Manual reference selected. Image generation can use this as the source.";
+        } else {
+            status.textContent = "Choose the clearest product image before running AI image edits.";
+        }
+
+        if (candidates.length === 0) {
+            grid.innerHTML = `<div class="reference-empty">${noImagesText}</div>`;
+            return;
+        }
+
+        candidates.forEach(candidate => {
+            const isSelected = candidate.local_path === selectedPath;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `reference-image-card${isSelected ? " selected" : ""}`;
+            button.title = `Use ${candidate.label} as the AI reference`;
+
+            const sourcePill = document.createElement("span");
+            sourcePill.className = "reference-source-pill";
+            sourcePill.textContent = `${candidate.source_label} ${candidate.index}`;
+
+            const img = document.createElement("img");
+            img.src = getProductImageSrc(item.slug, candidate.local_path);
+            img.alt = candidate.label;
+            img.loading = "lazy";
+
+            const label = document.createElement("span");
+            label.className = "reference-card-label";
+            label.textContent = candidate.label;
+
+            const selectedBadge = document.createElement("span");
+            selectedBadge.className = "reference-selected-badge";
+            selectedBadge.textContent = "Selected";
+
+            button.appendChild(sourcePill);
+            button.appendChild(img);
+            button.appendChild(label);
+            button.appendChild(selectedBadge);
+
+            button.addEventListener("click", () => saveReferenceImage(item, candidate, button, {
+                statusElement: status,
+                onSaved,
+            }));
+            grid.appendChild(button);
+        });
+    }
+
+    function renderReferencePicker(item) {
+        renderReferenceImageGrid({
+            item,
+            grid: referenceImageGrid,
+            status: referenceStatus,
+            emptyText: "No product selected.",
+            noImagesText: "No downloaded product images found.",
+        });
+    }
+
+    async function saveReferenceImage(item, candidate, button, options = {}) {
+        if (!item?.slug || !candidate?.local_path) return;
+
+        const statusElement = options.statusElement || referenceStatus;
+        const previousText = statusElement ? statusElement.textContent : "";
+        if (statusElement) {
+            statusElement.textContent = "Saving selected reference image...";
+        }
+        if (button) button.disabled = true;
+
+        try {
+            const res = await fetch("/api/set-reference-image", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    product_slug: item.slug,
+                    local_path: candidate.local_path,
+                    source: candidate.source,
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || "Failed to save reference image.");
+            }
+
+            item.primary_reference_image = data.primary_reference_image;
+            const queueItem = queueData.find(q => q.slug === item.slug);
+            if (queueItem) {
+                queueItem.primary_reference_image = data.primary_reference_image;
+            }
+            if (selectedQueueItem?.slug === item.slug) {
+                selectedQueueItem = queueItem || item;
+                renderReferencePicker(selectedQueueItem);
+            }
+            if (typeof options.onSaved === "function") {
+                options.onSaved(queueItem || item);
+            }
+            logConsole("success", `Reference image selected for ${item.slug}.`);
+        } catch (err) {
+            if (statusElement) {
+                statusElement.textContent = previousText;
+            }
+            await showInfoModal("Reference Save Failed", err.message);
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
+    function addQueueReferenceBadge(meta) {
+        if (!meta || meta.querySelector(".queue-reference-badge")) return;
+        const referenceLabel = document.createElement("span");
+        referenceLabel.className = "queue-reference-badge";
+        referenceLabel.textContent = "reference set";
+        meta.appendChild(referenceLabel);
+    }
+
+    function buildQueueReferencePanel(item, onSaved = null) {
+        const panel = document.createElement("div");
+        panel.className = "queue-reference-panel";
+
+        const header = document.createElement("div");
+        header.className = "queue-reference-header";
+
+        const titleWrap = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "preview-label";
+        title.textContent = "Reference Image";
+
+        const status = document.createElement("p");
+        status.className = "reference-status";
+
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(status);
+        header.appendChild(titleWrap);
+
+        const grid = document.createElement("div");
+        grid.className = "reference-image-grid queue-reference-grid";
+
+        panel.appendChild(header);
+        panel.appendChild(grid);
+
+        const renderPanelGrid = (nextItem = item) => {
+            renderReferenceImageGrid({
+                item: nextItem,
+                grid,
+                status,
+                emptyText: "No product selected.",
+                noImagesText: "Images are still downloading or unavailable.",
+                onSaved: (updatedItem) => {
+                    renderPanelGrid(updatedItem);
+                    if (typeof onSaved === "function") {
+                        onSaved(updatedItem);
+                    }
+                },
+            });
+        };
+
+        renderPanelGrid(item);
+        return panel;
+    }
+
     function buildListingPreviewPanel(item) {
         const listing = item.etsy_listing || {};
         const panel = document.createElement("div");
         panel.className = "listing-preview-panel";
+        const generatedImages = Array.isArray(item.generated_images) ? item.generated_images : [];
+        const generatedCount = generatedImages.map(getImagePath).filter(Boolean).length;
 
         const tags = listing.tags || [];
         const tagsHtml = tags.length > 0
@@ -729,6 +1326,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 </div>
             </div>
+
+            <div class="preview-field preview-generated-field">
+                <div class="preview-field-header">
+                    <span class="preview-label">Generated Images</span>
+                    <span class="preview-image-count">${generatedCount} image${generatedCount === 1 ? "" : "s"}</span>
+                </div>
+                <div class="preview-generated-images" data-generated-images></div>
+            </div>
             
             <div class="preview-field" style="margin-top: 16px;">
                 <div class="preview-field-header">
@@ -741,6 +1346,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 <textarea class="preview-desc" readonly>${listing.description || "—"}</textarea>
             </div>
         `;
+
+        renderPreviewGeneratedImages(
+            panel.querySelector("[data-generated-images]"),
+            generatedImages,
+            item.slug
+        );
 
         // Wire up copy event listeners
         panel.querySelectorAll(".copy-btn").forEach(btn => {
@@ -859,7 +1470,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     body: JSON.stringify({
                         product_slug: slug,
                         mode: wsPipelineMode.value,
-                        image_tasks: wsPipelineMode.value === "listing_with_images" ? getImageTasks() : []
+                        image_tasks: isImagePipelineMode() ? getImageTasks() : [],
+                        image_settings: getImageSettings()
                     })
                 });
                 // Wait for the SSE "done" or "error" event for this slug before continuing
@@ -917,6 +1529,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wsProductTitle.value = item.title;
         wsProductSlug.value = item.slug;
         btnGenerate.disabled = false;
+        renderReferencePicker(item);
 
         // Switch tab to Workspace
         navBtns[1].click();
@@ -931,8 +1544,20 @@ document.addEventListener("DOMContentLoaded", () => {
             if (item.generated_images) {
                 renderGeneratedImages(item.generated_images, item.slug);
             }
+        } else if (item.status === "done" && item.generated_images) {
+            activeListing = null;
+            workspace.classList.add("disabled");
+            etsyTitle.value = "";
+            etsyPrice.value = "";
+            etsyDesc.value = "";
+            tagsContainer.innerHTML = "";
+            btnSave.disabled = true;
+            variationsSpecsWrapper.style.display = "none";
+            variationsSpecsList.innerHTML = "";
+            renderGeneratedImages(item.generated_images, item.slug);
         } else {
             // Reset workspace
+            activeListing = null;
             workspace.classList.add("disabled");
             etsyTitle.value = "";
             etsyPrice.value = "";
@@ -958,7 +1583,8 @@ document.addEventListener("DOMContentLoaded", () => {
             body: JSON.stringify({
                 product_slug: slug,
                 mode: wsPipelineMode.value,
-                image_tasks: wsPipelineMode.value === "listing_with_images" ? getImageTasks() : []
+                image_tasks: isImagePipelineMode() ? getImageTasks() : [],
+                image_settings: getImageSettings()
             })
         });
     });
@@ -1103,13 +1729,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         images.forEach((imgFile) => {
+            const imagePath = getImagePath(imgFile);
+            if (!imagePath) return;
+
             const card = document.createElement("div");
             card.className = "prompt-card";
 
             const imgWrap = document.createElement("div");
             imgWrap.className = "prompt-card-img-wrapper";
             const img = document.createElement("img");
-            img.src = `/api/product-image/${slug}/${encodeURIComponent(imgFile)}?t=${Date.now()}`;
+            img.src = getProductImageSrc(slug, imagePath, true);
             img.style.display = "block";
             
             imgWrap.appendChild(img);

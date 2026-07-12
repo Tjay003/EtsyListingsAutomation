@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=4">
+    <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
     <div class="app-container">
@@ -98,6 +98,7 @@
                 <!-- LEFT SIDE: PIPELINE CONTROL -->
                 <div class="left-panel">
                     <div class="card panel-card">
+                        <div class="panel-card-inner">
                         <h2 class="panel-title">Pipeline Control</h2>
                         
                         <div class="input-group">
@@ -111,7 +112,20 @@
                             <select id="ws-pipeline-mode" class="select-input">
                                 <option value="listing_only">Listing Copy Only</option>
                                 <option value="listing_with_images">Listing Copy + AI Images</option>
+                                <option value="images_only">AI Images Only</option>
                             </select>
+                        </div>
+
+                        <div id="reference-picker-container" class="reference-picker-container">
+                            <div class="reference-picker-header">
+                                <div>
+                                    <label class="field-label">Reference Image</label>
+                                    <p id="reference-status" class="reference-status">Select a product to choose the source image for AI edits.</p>
+                                </div>
+                            </div>
+                            <div id="reference-image-grid" class="reference-image-grid">
+                                <div class="reference-empty">No product selected.</div>
+                            </div>
                         </div>
 
                         <!-- IMAGE GENERATION CONFIGURATION -->
@@ -127,6 +141,26 @@
                                 <button type="button" id="btn-delete-preset" class="secondary-btn preset-delete-btn" title="Delete Selected Preset">Delete</button>
                             </div>
 
+                            <div class="image-model-panel">
+                                <div class="input-group">
+                                    <label class="field-label" for="image-model-select">Image Model</label>
+                                    <select id="image-model-select" class="select-input">
+                                        <option value="flux-kontext-pro" selected>Flux Kontext Pro</option>
+                                        <option value="flux-kontext-dev">Flux Kontext Dev</option>
+                                        <option value="nano-banana-2-edit">Nano Banana 2 Edit</option>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label class="field-label" for="image-thinking-select">Thinking Mode</label>
+                                    <select id="image-thinking-select" class="select-input" disabled>
+                                        <option value="off" selected>Off</option>
+                                        <option value="minimal">Minimal</option>
+                                        <option value="high">High</option>
+                                    </select>
+                                </div>
+                                <p class="image-settings-hint">Flux Kontext Pro stays default for variation batches. Use Nano Banana 2 with thinking for main showcase images.</p>
+                            </div>
+
                             <label class="field-label task-section-label">Generation Tasks</label>
                             <div id="image-tasks-list" class="image-tasks-list">
                                 <!-- Dynamic Tasks Go Here -->
@@ -136,8 +170,11 @@
                                 <button type="button" id="btn-add-individual-task" class="secondary-btn dashed-btn">+ Add Individual</button>
                             </div>
                         </div>
-                        
-                        <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 16px; flex-shrink: 0;">
+                        <button id="btn-generate" class="primary-btn" disabled style="width: 100%;">Run Pipeline</button>
                     </div>
                 </div>
 
@@ -284,6 +321,6 @@
             </div>
         </div>
     </div>
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=16"></script>
 </body>
 </html>

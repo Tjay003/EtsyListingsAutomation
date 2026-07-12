@@ -5,6 +5,8 @@ import asyncio
 import shutil
 import urllib.parse
 import urllib.request
+import uuid
+from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +27,10 @@ from src.ai_helper import (
     extract_variation_specs
 )
 from src.image_gen import (
-    generate_image_with_imagen
+    DEFAULT_FAL_MODEL_KEY,
+    FAL_IMAGE_MODELS,
+    generate_image_with_imagen,
+    resolve_fal_image_settings
 )
 
 # Load env variables initially
@@ -379,14 +384,502 @@ def serve_product_image(slug: str, image_path: str):
 class ImageTaskConfig(BaseModel):
     task_type: str = "batch" # "batch" or "individual"
     target: str
-    prompt: str
+    prompt: str = ""
+    prompt_mode: str = "custom" # "preset" or "custom"
+    prompt_preset: str = "auto_product_staging"
+    model_key: str = "" # blank inherits ImageGenerationSettings.model_key
+    thinking_level: str = "" # blank/inherit/off/minimal/high; only used by models that support it
+
+class ImageGenerationSettings(BaseModel):
+    model_key: str = DEFAULT_FAL_MODEL_KEY
+    thinking_level: str = ""
 
 class RunPipelineRequest(BaseModel):
     product_slug: str
-    mode: str # "listing_only" | "listing_with_images"
+    mode: str # "listing_only" | "listing_with_images" | "images_only"
     image_tasks: list[ImageTaskConfig] = []
+    image_settings: ImageGenerationSettings = ImageGenerationSettings()
 
-def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
+class ReferenceImageRequest(BaseModel):
+    product_slug: str
+    local_path: str
+    source: str = ""
+
+def normalize_product_image_path(product_dir: str, local_path: str):
+    if not local_path:
+        raise HTTPException(status_code=400, detail="Missing image path")
+
+    clean_rel = local_path.replace("\\", "/").lstrip("/")
+    allowed_prefixes = ("main_images/", "variation_images/", "description_images/")
+    if not clean_rel.startswith(allowed_prefixes):
+        raise HTTPException(status_code=400, detail="Reference image must come from downloaded product images")
+
+    product_abs = os.path.abspath(product_dir)
+    image_abs = os.path.abspath(os.path.join(product_abs, clean_rel))
+    if os.path.commonpath([product_abs, image_abs]) != product_abs:
+        raise HTTPException(status_code=400, detail="Invalid image path")
+    if not os.path.exists(image_abs):
+        raise HTTPException(status_code=404, detail="Reference image file not found")
+
+    return clean_rel, image_abs
+
+def get_image_local_path(image_entry):
+    if isinstance(image_entry, dict):
+        return image_entry.get("local_path") or image_entry.get("path") or image_entry.get("filename")
+    return image_entry
+
+def resolve_primary_reference_image(metadata: dict):
+    primary = metadata.get("primary_reference_image")
+    primary_path = get_image_local_path(primary)
+    if primary_path:
+        return {
+            "local_path": primary_path,
+            "source": primary.get("source", "manual") if isinstance(primary, dict) else "manual",
+        }
+
+    for source_key in ("main_images", "variation_images", "description_images"):
+        images = metadata.get(source_key) or []
+        if images:
+            first_image = images[0]
+            local_path = get_image_local_path(first_image)
+            if local_path:
+                return {
+                    "local_path": local_path,
+                    "source": source_key,
+                    "selected_by": "fallback",
+                }
+    return None
+
+DEFAULT_IMAGE_PROMPT_PRESET = "auto_product_staging"
+
+IMAGE_PROMPT_PRESETS = {
+    "auto_product_staging": {
+        "label": "Adaptive Product Staging",
+        "description": "Creates a polished marketplace-ready product scene with tasteful context.",
+        "direction": (
+            "Create a premium marketplace-ready product staging photograph for this {product_type}. "
+            "Choose one believable placement from {scene}; make the product the clear hero and keep the styling simple, elevated, and commercially useful."
+        ),
+        "composition": (
+            "Keep the full product clearly visible unless the reference itself is a detail angle. Use natural product scale, realistic contact shadows, "
+            "clean edges, and a balanced composition where the product occupies roughly 60-75% of the frame. "
+            "If it is a bag or accessory, place it on a bed, chair, vanity, shelf, cafe table, entryway bench, or daily-carry surface. "
+            "If it is a kitchen tool, place it on a modern kitchen counter or prep surface. Avoid people, hands, mannequins, heavy props, and clutter unless the preset explicitly asks for them."
+        ),
+        "style": "premium Etsy and Shopify product photography, soft directional natural light, realistic materials, true-to-reference colors, uncluttered styling, sharp focus",
+    },
+    "auto_lifestyle_model": {
+        "label": "Modeled By Someone",
+        "description": "Shows the product worn, held, carried, or used by an appropriate person.",
+        "direction": (
+            "Create a realistic lifestyle image where the {product_type} is modeled or used by a {audience}. "
+            "If the item is wearable, jewelry, clothing, a bag, or an accessory, show it naturally worn, held, or carried. "
+            "If it is not wearable, show a person using it in a believable everyday scenario only when that helps explain the product."
+        ),
+        "composition": (
+            "Keep the person secondary to the product. Prefer cropped hands, torso, or natural body framing over a face-forward portrait unless the product requires it. "
+            "The product must remain easy to inspect, correctly scaled, and visibly faithful to the reference."
+        ),
+        "style": "natural commercial lifestyle photography, realistic skin tones, soft editorial lighting, authentic everyday setting",
+    },
+    "auto_in_use": {
+        "label": "In Use",
+        "description": "Shows the product actively being used in its most likely real-world context.",
+        "direction": (
+            "Create an in-use product photograph for this {product_type}. "
+            "Show the product performing its intended function in {scene}."
+        ),
+        "composition": (
+            "For a bag, show it carried, opened, packed, or set down during daily use. "
+            "For a kitchen tool, show it during food preparation. "
+            "For beauty, fitness, craft, office, home, or pet products, choose the matching everyday use context."
+        ),
+        "style": "realistic lifestyle product photography, candid but polished, natural light, practical scene details",
+    },
+    "clean_catalog": {
+        "label": "Clean Catalog Hero",
+        "description": "A simple ecommerce hero shot with better lighting and a clean background.",
+        "direction": (
+            "Create a clean ecommerce catalog hero image of this {product_type}. "
+            "Center the product, keep the full silhouette visible, and make it easy to inspect at marketplace thumbnail size."
+        ),
+        "composition": "Use a simple premium off-white, warm gray, or soft neutral background, remove clutter, keep clean margins, and keep the product isolated as the hero subject.",
+        "style": "square 1:1 sharp studio product photography, softbox lighting, crisp edges, true-to-reference color, high detail, consistent marketplace variation gallery",
+    },
+    "detail_closeup": {
+        "label": "Detail Close-up",
+        "description": "A closer product detail shot focused on texture, material, finish, or craftsmanship.",
+        "direction": (
+            "Create a close-up product detail image for this {product_type}. "
+            "Emphasize the most important texture, material, finish, hardware, surface quality, or craftsmanship visible in the reference image."
+        ),
+        "composition": "Use a crop that feels intentional and premium while keeping enough of the product visible to understand what it is.",
+        "style": "macro commercial product photography, crisp focus, tactile material detail, controlled highlights",
+    },
+    "gift_unboxing": {
+        "label": "Gift / Unboxing",
+        "description": "Show the product in a giftable unboxing or premium packaging scene.",
+        "direction": (
+            "Create a tasteful gift or unboxing scene for this {product_type}. "
+            "Present it as a giftable item without hiding the product."
+        ),
+        "composition": "Use simple premium packaging, tissue paper, ribbon, box, or a clean tabletop arrangement, with packaging secondary to the product.",
+        "style": "warm premium unboxing photography, clean tabletop styling, soft shadows, giftable ecommerce aesthetic",
+    },
+    "luxury_editorial_plinth": {
+        "label": "Luxury Editorial Plinth",
+        "description": "A high-end editorial product shot on a minimalist geometric plinth.",
+        "direction": (
+            "Create a high-end fashion editorial product photograph for this {product_type}. "
+            "Place the product upright on a minimalist geometric limestone or stone plinth block when physically plausible."
+        ),
+        "composition": (
+            "Adapt the camera angle to the uploaded reference image unless a side-profile view is clearly safe. "
+            "Emphasize the product silhouette, slim structural form, edge lines, and authentic surface details."
+        ),
+        "style": (
+            "neo-minimalist concrete interior, monolithic plaster wall, intersecting architectural angles, neutral taupe and raw sand-stone gray palette, "
+            "intense direct cinematic afternoon side sunlight, hard-edged geometric shadow, 35mm lens, luxury brand aesthetic, sharp focus on edges"
+        ),
+    },
+}
+
+def infer_image_prompt_context(metadata: dict, visual_details: str = ""):
+    title = metadata.get("title", "") or ""
+    specs = metadata.get("specs", {}) or {}
+    listing = metadata.get("etsy_listing", {}) or {}
+    specs_text = " ".join([f"{k} {v}" for k, v in specs.items()])
+    raw_text = " ".join([
+        title,
+        specs_text,
+        metadata.get("description_text", "") or "",
+        listing.get("title", "") or "",
+        listing.get("category", "") or "",
+        visual_details or "",
+    ]).lower()
+
+    product_type = "product"
+    type_markers = [
+        ("bag", ["bag", "purse", "tote", "handbag", "shoulder bag", "crossbody", "backpack", "wallet", "clutch"]),
+        ("kitchen tool", ["kitchen", "cooking", "cookware", "utensil", "knife", "spatula", "pan", "baking", "food", "peeler", "grater"]),
+        ("jewelry", ["jewelry", "necklace", "bracelet", "earring", "ring", "pendant", "charm"]),
+        ("clothing", ["shirt", "dress", "hoodie", "jacket", "pants", "skirt", "sweater", "blouse", "wear", "apparel"]),
+        ("shoe", ["shoe", "sneaker", "sandal", "boot", "heel", "slipper"]),
+        ("home decor product", ["decor", "vase", "lamp", "rug", "pillow", "blanket", "wall art", "candle", "organizer"]),
+        ("beauty product", ["makeup", "beauty", "cosmetic", "skincare", "brush", "mirror", "hair", "nail"]),
+        ("office product", ["desk", "office", "stationery", "planner", "notebook", "pen", "keyboard"]),
+        ("pet product", ["pet", "dog", "cat", "leash", "collar", "toy"]),
+    ]
+    for label, keywords in type_markers:
+        if any(keyword in raw_text for keyword in keywords):
+            product_type = label
+            break
+
+    audience = "adult model"
+    if any(word in raw_text for word in ["women", "woman", "female", "lady", "ladies", "girl", "girls", "her"]):
+        audience = "female adult model"
+    elif any(word in raw_text for word in ["men", "man", "male", "gentleman", "boy", "boys", "his"]):
+        audience = "male adult model"
+    elif any(word in raw_text for word in ["baby", "toddler", "kid", "kids", "child", "children"]):
+        audience = "family-friendly model or parent-assisted scene"
+
+    scene = "a clean, realistic lifestyle setting"
+    if product_type == "bag":
+        scene = "a bedroom, boutique dressing area, cafe table, entryway bench, or everyday city setting"
+    elif product_type == "kitchen tool":
+        scene = "a bright modern kitchen with a clean counter, fresh ingredients, and natural light"
+    elif product_type == "jewelry":
+        scene = "a minimal dressing table, soft studio setting, or natural lifestyle portrait setup"
+    elif product_type == "clothing":
+        scene = "a natural lifestyle wardrobe, streetwear, studio, or home setting"
+    elif product_type == "shoe":
+        scene = "a clean lifestyle floor, entryway, streetwear setting, or studio setup"
+    elif product_type == "home decor product":
+        scene = "a styled living room, bedroom, shelf, table, or cozy home interior"
+    elif product_type == "beauty product":
+        scene = "a bathroom vanity, dressing table, soft studio, or beauty routine setup"
+    elif product_type == "office product":
+        scene = "a clean desk, workspace, planner setup, or modern office environment"
+    elif product_type == "pet product":
+        scene = "a clean home or outdoor pet lifestyle scene"
+
+    return {
+        "product_title": title or "the product",
+        "product_type": product_type,
+        "audience": audience,
+        "scene": scene,
+        "visual_details": visual_details or "the reference product details",
+    }
+
+def build_image_to_image_prompt(context: dict, direction: str, composition: str = "", style: str = "", custom_text: str = ""):
+    def as_sentence(text: str):
+        text = (text or "").strip()
+        if not text:
+            return ""
+        return text if text.endswith((".", "!", "?")) else f"{text}."
+
+    edit_direction = custom_text.strip() or "Create a premium product image using the selected creative direction."
+    if direction:
+        edit_direction = direction
+
+    prompt_parts = [
+        "Use the uploaded reference image as the source of truth.",
+        (
+            "Carefully preserve the exact product identity, original silhouette, material textures, colors, proportions, "
+            "physical shapes, structural profile, and visible details from the reference image."
+        ),
+        f"Reference image analysis: {context.get('visual_details')}.",
+        f"Product context: {context.get('product_title')} ({context.get('product_type')}).",
+        f"Creative direction: {as_sentence(edit_direction)}",
+    ]
+
+    if composition:
+        prompt_parts.append(f"Composition: {as_sentence(composition)}")
+    if style:
+        prompt_parts.append(f"Photography style: {as_sentence(style)}")
+
+    prompt_parts.extend([
+        (
+            "Compose the final image as a square 1:1 product listing image with balanced margins on all sides."
+        ),
+        (
+            "The final result should look like a finished Etsy or Shopify listing photo, not an AI concept render."
+        ),
+        (
+            "Make the generated scene realistic with correct product scale, believable placement, natural perspective, "
+            "contact shadows, and lighting that matches the new environment."
+        ),
+        (
+            "Unless the creative direction explicitly requests a close-up, keep the product fully visible, sharply focused, and easy to inspect. "
+            "Use simple tasteful styling and avoid crowded props, surreal environments, excessive blur, or overdramatic color grading."
+        ),
+        (
+            "Do not redesign the product, do not change its colorway, do not add logos or decorations, "
+            "do not add text overlays or watermarks, do not duplicate the product, and do not invent extra parts that are not visible or implied by the reference image."
+        ),
+    ])
+
+    return " ".join(part for part in prompt_parts if part)
+
+def resolve_image_task_prompt(task, metadata: dict, visual_details: str = ""):
+    prompt_mode = task.get("prompt_mode", "custom") if isinstance(task, dict) else getattr(task, "prompt_mode", "custom")
+    prompt_preset = task.get("prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET) if isinstance(task, dict) else getattr(task, "prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET)
+    custom_prompt = task.get("prompt", "") if isinstance(task, dict) else getattr(task, "prompt", "")
+    context = infer_image_prompt_context(metadata, visual_details)
+
+    if prompt_mode == "preset":
+        preset = IMAGE_PROMPT_PRESETS.get(prompt_preset, IMAGE_PROMPT_PRESETS[DEFAULT_IMAGE_PROMPT_PRESET])
+        return build_image_to_image_prompt(
+            context=context,
+            direction=preset.get("direction", "").format(**context),
+            composition=preset.get("composition", "").format(**context),
+            style=preset.get("style", "").format(**context),
+        )
+
+    if custom_prompt:
+        return build_image_to_image_prompt(
+            context=context,
+            direction="",
+            custom_text=custom_prompt,
+        )
+
+    preset = IMAGE_PROMPT_PRESETS[DEFAULT_IMAGE_PROMPT_PRESET]
+    return build_image_to_image_prompt(
+        context=context,
+        direction=preset.get("direction", "").format(**context),
+        composition=preset.get("composition", "").format(**context),
+        style=preset.get("style", "").format(**context),
+    )
+
+@app.get("/api/image-prompt-presets")
+def get_image_prompt_presets():
+    return {
+        "default_prompt_preset": DEFAULT_IMAGE_PROMPT_PRESET,
+        "presets": [
+            {
+                "key": key,
+                "label": value["label"],
+                "description": value["description"],
+            }
+            for key, value in IMAGE_PROMPT_PRESETS.items()
+        ],
+    }
+
+@app.post("/api/set-reference-image")
+def set_reference_image(req: ReferenceImageRequest):
+    try:
+        out_root = get_output_dir()
+        product_dir = os.path.join(out_root, req.product_slug)
+        meta_path = os.path.join(product_dir, "metadata.json")
+
+        if not os.path.exists(meta_path):
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        clean_rel, _ = normalize_product_image_path(product_dir, req.local_path)
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        source = req.source or clean_rel.split("/", 1)[0]
+        metadata["primary_reference_image"] = {
+            "local_path": clean_rel,
+            "source": source,
+            "selected_by": "manual",
+            "selected_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=4, ensure_ascii=False)
+
+        streamer.publish({"status": "queue_updated"})
+        return {
+            "status": "success",
+            "primary_reference_image": metadata["primary_reference_image"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: list, image_settings: dict, client):
+    selected_image_settings = resolve_fal_image_settings(
+        (image_settings or {}).get("model_key")
+    )
+    global_thinking_level = (image_settings or {}).get("thinking_level", "")
+
+    def normalize_thinking_level(value, settings):
+        normalized = (value or "").strip().lower()
+        if normalized in ("", "inherit", "off", "none", "disabled"):
+            return ""
+        if settings.get("supports_thinking") and normalized in settings.get("thinking_levels", []):
+            return normalized
+        return ""
+
+    global_thinking_level = normalize_thinking_level(global_thinking_level, selected_image_settings)
+
+    streamer.publish({
+        "status": "progress",
+        "message": "Executing image generation tasks..."
+    })
+    metadata["image_generation_settings"] = {
+        "model_key": selected_image_settings["model_key"],
+        "model": selected_image_settings["model"],
+        "label": selected_image_settings["label"],
+        "thinking_level": global_thinking_level,
+        "task_overrides_enabled": True,
+        "square_output": "1:1",
+    }
+
+    def get_task_value(task, key, default=None):
+        if isinstance(task, dict):
+            return task.get(key, default)
+        return getattr(task, key, default)
+
+    def resolve_task_image_settings(task):
+        task_model_key = (get_task_value(task, "model_key", "") or "").strip()
+        task_settings = resolve_fal_image_settings(task_model_key or selected_image_settings["model_key"])
+        task_thinking = get_task_value(task, "thinking_level", "")
+        if task_thinking in (None, "", "inherit"):
+            task_thinking = global_thinking_level
+        return task_settings, normalize_thinking_level(task_thinking, task_settings)
+
+    def get_abs_path(rel_or_dict):
+        local_path = get_image_local_path(rel_or_dict)
+        if not local_path:
+            return ""
+        return os.path.join(product_dir, local_path)
+
+    existing_generated_images = metadata.get("generated_images") or []
+    if not isinstance(existing_generated_images, list):
+        existing_generated_images = []
+    generated_images = list(existing_generated_images)
+
+    run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def build_generated_filename(target_folder: str, task, task_index: int, image_index: int):
+        prompt_mode = task.get("prompt_mode", "custom") if isinstance(task, dict) else getattr(task, "prompt_mode", "custom")
+        prompt_preset = task.get("prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET) if isinstance(task, dict) else getattr(task, "prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET)
+        prompt_label = prompt_preset if prompt_mode == "preset" else "custom"
+        unique_suffix = uuid.uuid4().hex[:8]
+        base_name = sanitize_filename(
+            f"gen_{target_folder}_{prompt_label}_{run_stamp}_t{task_index + 1}_i{image_index + 1}_{unique_suffix}"
+        )
+        return f"{base_name or f'gen_{run_stamp}_{unique_suffix}'}.png"
+
+    for t_idx, task in enumerate(image_tasks):
+        task_type = get_task_value(task, "task_type", "batch")
+        target_folder = get_task_value(task, "target", "main_images")
+        target_label = "selected reference image" if target_folder == "selected_reference" else target_folder
+        task_image_settings, task_thinking_level = resolve_task_image_settings(task)
+
+        target_images = []
+        if target_folder == "selected_reference":
+            selected_reference = resolve_primary_reference_image(metadata)
+            if selected_reference:
+                target_images = [selected_reference]
+                if selected_reference.get("selected_by") == "fallback":
+                    streamer.publish({
+                        "status": "progress",
+                        "message": "No manual reference selected; falling back to the first available product image.",
+                    })
+        elif task_type == "individual":
+            if target_folder == "first_main" and metadata.get("main_images"):
+                target_images = [metadata["main_images"][0]]
+            elif target_folder == "first_variation" and metadata.get("variation_images"):
+                target_images = [metadata["variation_images"][0]]
+            elif target_folder == "first_description" and metadata.get("description_images"):
+                target_images = [metadata["description_images"][0]]
+        else:
+            if target_folder == "first_main":
+                if metadata.get("main_images"):
+                    target_images = [metadata["main_images"][0]]
+            else:
+                target_images = metadata.get(target_folder, [])
+
+        if not target_images:
+            streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_label}, skipping."})
+            continue
+
+        thinking_note = f" ({task_thinking_level} thinking)" if task_thinking_level else ""
+        streamer.publish({
+            "status": "progress",
+            "message": (
+                f"Task {t_idx+1}: Generating {len(target_images)} images for {target_label} "
+                f"with {task_image_settings['label']}{thinking_note}..."
+            )
+        })
+
+        for img_idx, img_meta in enumerate(target_images):
+            ref_path = get_abs_path(img_meta)
+            if not os.path.exists(ref_path):
+                streamer.publish({"status": "progress", "message": f"   -> Reference image missing, skipping item {img_idx+1}."})
+                continue
+
+            visual_details = generate_image_prompt_details(ref_path, client)
+            prompt_style = resolve_image_task_prompt(task, metadata, visual_details)
+            final_prompt = prompt_style
+
+            out_filename = build_generated_filename(target_folder, task, t_idx, img_idx)
+            out_path = os.path.join(product_dir, out_filename)
+
+            streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."})
+
+            res_path = generate_image_with_imagen(
+                prompt=final_prompt,
+                output_path=out_path,
+                client=client,
+                reference_image=ref_path,
+                fal_model_key=task_image_settings["model_key"],
+                fal_thinking_level=task_thinking_level
+            )
+
+            if res_path:
+                generated_images.append(out_filename)
+
+    metadata["generated_images"] = generated_images
+    return generated_images
+
+def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None):
     try:
         out_root = get_output_dir()
         product_dir = os.path.join(out_root, slug)
@@ -408,6 +901,20 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
         client = get_genai_client()
         title = metadata.get("title", "")
         price = metadata.get("price", "")
+
+        if mode == "images_only":
+            if image_tasks:
+                run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client)
+            else:
+                streamer.publish({"status": "progress", "message": "AI Images Only selected, but no image tasks were configured."})
+
+            metadata["status"] = "done"
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=4, ensure_ascii=False)
+
+            streamer.publish({"status": "queue_updated"})
+            streamer.publish({"status": "progress", "message": f"Successfully completed image generation: {title[:30]}"})
+            return
 
         # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
         image_facts = metadata.get("image_facts")
@@ -512,67 +1019,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
 
         # Image generation if requested
         if mode == "listing_with_images" and image_tasks:
-            streamer.publish({"status": "progress", "message": "Executing Batch Image Generation tasks..."})
-            
-            def get_abs_path(rel_or_dict):
-                if isinstance(rel_or_dict, dict):
-                    return os.path.join(product_dir, rel_or_dict.get("local_path"))
-                return os.path.join(product_dir, rel_or_dict)
-            
-            generated_images = []
-            
-            for t_idx, task in enumerate(image_tasks):
-                task_type = task.get("task_type", "batch") if isinstance(task, dict) else getattr(task, "task_type", "batch")
-                target_folder = task.get("target", "main_images") if isinstance(task, dict) else task.target
-                prompt_style = task.get("prompt", "") if isinstance(task, dict) else task.prompt
-                
-                target_images = []
-                if task_type == "individual":
-                    if target_folder == "first_main" and metadata.get("main_images"):
-                        target_images = [metadata["main_images"][0]]
-                    elif target_folder == "first_variation" and metadata.get("variation_images"):
-                        target_images = [metadata["variation_images"][0]]
-                    elif target_folder == "first_description" and metadata.get("description_images"):
-                        target_images = [metadata["description_images"][0]]
-                else:
-                    if target_folder == "first_main":
-                        if metadata.get("main_images"):
-                            target_images = [metadata["main_images"][0]]
-                    else:
-                        target_images = metadata.get(target_folder, [])
-                    
-                if not target_images:
-                    streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_folder}, skipping."})
-                    continue
-                    
-                streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: Generating {len(target_images)} images for {target_folder}..."})
-                
-                for img_idx, img_meta in enumerate(target_images):
-                    ref_path = get_abs_path(img_meta)
-                    if not os.path.exists(ref_path):
-                        continue
-                        
-                    visual_details = generate_image_prompt_details(ref_path, client)
-                    combined_trigger = f"product, {visual_details}" if visual_details else "product"
-                    
-                    final_prompt = f"{combined_trigger}, {prompt_style}"
-                    
-                    out_filename = f"gen_{target_folder}_{t_idx}_{img_idx}.png"
-                    out_path = os.path.join(product_dir, out_filename)
-                    
-                    streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."})
-                    
-                    res_path = generate_image_with_imagen(
-                        prompt=final_prompt,
-                        output_path=out_path,
-                        client=client,
-                        reference_image=ref_path
-                    )
-                    
-                    if res_path:
-                        generated_images.append(out_filename)
-            
-            metadata["generated_images"] = generated_images
+            run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client)
 
         metadata["status"] = "done"
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -611,7 +1058,8 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None):
 
 @app.post("/api/run-pipeline")
 def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks)
+    image_settings = req.image_settings.model_dump() if req.image_settings else {}
+    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings)
     return {"status": "success", "message": "Pipeline execution started"}
 
 class ExportZipRequest(BaseModel):
@@ -704,6 +1152,42 @@ class GenerationPreset(BaseModel):
     name: str
     mode: str
     image_tasks: list[ImageTaskConfig]
+    image_settings: ImageGenerationSettings = ImageGenerationSettings()
+
+@app.get("/api/image-generation-options")
+def get_image_generation_options():
+    return {
+        "default_model_key": DEFAULT_FAL_MODEL_KEY,
+        "models": [
+            {
+                "key": key,
+                "label": config["label"],
+                "model": config["model"],
+                "supports_thinking": config.get("supports_thinking", False),
+                "thinking_levels": config.get("thinking_levels", []),
+                "description": config.get("description", ""),
+                "recommended_for": config.get("recommended_for", ""),
+            }
+            for key, config in FAL_IMAGE_MODELS.items()
+        ],
+        "thinking_levels": [
+            {
+                "key": "off",
+                "label": "Off",
+                "description": "Do not send a thinking parameter."
+            },
+            {
+                "key": "minimal",
+                "label": "Minimal",
+                "description": "Light reasoning for smarter edits at nearly the same cost."
+            },
+            {
+                "key": "high",
+                "label": "High",
+                "description": "Best for hero/showcase edits where product accuracy matters most."
+            },
+        ],
+    }
 
 @app.get("/api/generation-presets")
 def get_generation_presets():
@@ -723,7 +1207,8 @@ def save_generation_preset(preset: GenerationPreset):
                 pass
     presets[preset.name] = {
         "mode": preset.mode,
-        "image_tasks": [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in preset.image_tasks]
+        "image_tasks": [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in preset.image_tasks],
+        "image_settings": preset.image_settings.model_dump()
     }
     with open(GENERATION_PRESETS_FILE, "w", encoding="utf-8") as f:
         json.dump(presets, f, indent=4)

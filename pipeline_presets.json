@@ -1,0 +1,65 @@
+{
+    "default": {
+        "mode": "listing_with_images",
+        "image_tasks": [
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "clean_catalog",
+                "model_key": "nano-banana-2-edit",
+                "thinking_level": "high"
+            },
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "auto_product_staging",
+                "model_key": "nano-banana-2-edit",
+                "thinking_level": "high"
+            },
+            {
+                "task_type": "batch",
+                "target": "variation_images",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "clean_catalog",
+                "model_key": "flux-kontext-pro",
+                "thinking_level": "off"
+            }
+        ],
+        "image_settings": {
+            "model_key": "flux-kontext-pro",
+            "thinking_level": "off"
+        }
+    },
+    "MinimalistModels": {
+        "mode": "images_only",
+        "image_tasks": [
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "a minimalist product shot of my image, retro-future design, rounded corners. Soft-focus studio setting, neutral cream background. Volumetric lighting, clean composition, high-end editorial feel, tactile surfaces",
+                "prompt_mode": "custom",
+                "prompt_preset": "auto_product_staging",
+                "model_key": "nano-banana-2-edit",
+                "thinking_level": "high"
+            },
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "A tight, high-resolution close-up product photograph focused on the top right corner of the product (as shown in the provided image). Soft, diffused studio lighting creates clean reflections. Set against a solid, seamless light beige cyclorama background with a shallow depth of field. Clean, minimalist composition.",
+                "prompt_mode": "custom",
+                "prompt_preset": "auto_product_staging",
+                "model_key": "nano-banana-2-edit",
+                "thinking_level": "high"
+            }
+        ],
+        "image_settings": {
+            "model_key": "flux-kontext-pro",
+            "thinking_level": "off"
+        }
+    }
+}

@@ -7,8 +7,66 @@ from google import genai
 from google.genai import types
 from src.ai_helper import get_genai_client
 
-def generate_image_with_fal(prompt, input_image_path, output_path):
-    """Generate image-to-image using Fal.ai SDK with FLUX or SDXL."""
+FAL_IMAGE_MODELS = {
+    "flux-kontext-dev": {
+        "model": "fal-ai/flux-kontext/dev",
+        "label": "Flux Kontext Dev",
+        "square_argument": ("resolution_mode", "1:1"),
+        "input_image_argument": "image_url",
+        "input_image_list": False,
+        "description": "Lower-cost Flux Kontext testing model.",
+        "recommended_for": "Testing product edits before using the Pro model.",
+    },
+    "flux-kontext-pro": {
+        "model": "fal-ai/flux-pro/kontext",
+        "label": "Flux Kontext Pro",
+        "square_argument": ("aspect_ratio", "1:1"),
+        "input_image_argument": "image_url",
+        "input_image_list": False,
+        "description": "Default balanced image-to-image model for accurate product edits.",
+        "recommended_for": "Variation batches and reliable day-to-day listing images.",
+    },
+    "nano-banana-2-edit": {
+        "model": "fal-ai/nano-banana-2/edit",
+        "label": "Nano Banana 2 Edit",
+        "square_argument": ("aspect_ratio", "1:1"),
+        "input_image_argument": "image_urls",
+        "input_image_list": True,
+        "extra_arguments": {
+            "resolution": "1K",
+            "limit_generations": True,
+        },
+        "supports_thinking": True,
+        "thinking_levels": ["minimal", "high"],
+        "description": "Smarter Google image-edit model with optional thinking.",
+        "recommended_for": "Hero/showcase images where accuracy and scene reasoning matter most.",
+    },
+}
+
+DEFAULT_FAL_MODEL_KEY = "flux-kontext-pro"
+
+def resolve_fal_image_settings(model_key=None):
+    selected_model_key = model_key or DEFAULT_FAL_MODEL_KEY
+    if selected_model_key not in FAL_IMAGE_MODELS:
+        selected_model_key = DEFAULT_FAL_MODEL_KEY
+
+    model_config = FAL_IMAGE_MODELS[selected_model_key]
+    return {
+        "model_key": selected_model_key,
+        "model": model_config["model"],
+        "label": model_config["label"],
+        "square_argument": model_config.get("square_argument"),
+        "input_image_argument": model_config.get("input_image_argument", "image_url"),
+        "input_image_list": model_config.get("input_image_list", False),
+        "extra_arguments": model_config.get("extra_arguments", {}),
+        "supports_thinking": model_config.get("supports_thinking", False),
+        "thinking_levels": model_config.get("thinking_levels", []),
+        "description": model_config.get("description", ""),
+        "recommended_for": model_config.get("recommended_for", ""),
+    }
+
+def generate_image_with_fal(prompt, input_image_path, output_path, model_key=None, thinking_level=None):
+    """Generate image-to-image using the configured Fal.ai model."""
     try:
         import fal_client
         import requests
@@ -20,21 +78,47 @@ def generate_image_with_fal(prompt, input_image_path, output_path):
             
         os.environ["FAL_KEY"] = api_key
         
-        # Default to FLUX Dev image-to-image
-        model = os.getenv("FAL_MODEL", "fal-ai/flux/dev/image-to-image")
-        strength = float(os.getenv("FAL_STRENGTH", "0.75"))
+        if not model_key:
+            env_model = os.getenv("FAL_MODEL")
+            model_key = next(
+                (key for key, config in FAL_IMAGE_MODELS.items() if config["model"] == env_model),
+                DEFAULT_FAL_MODEL_KEY,
+            )
+
+        settings = resolve_fal_image_settings(model_key)
+        model = settings["model"]
+        final_prompt = prompt
         
         print(f"Uploading reference image: {input_image_path} to Fal.ai...")
         image_url = fal_client.upload_file(input_image_path)
         
-        print(f"Generating Fal.ai img2img ({model}) using reference URL: {image_url}...")
+        thinking_level = (thinking_level or "").strip().lower()
+        active_thinking = ""
+        if settings.get("supports_thinking") and thinking_level in settings.get("thinking_levels", []):
+            active_thinking = thinking_level
+
+        thinking_note = f" with {active_thinking} thinking" if active_thinking else ""
+        print(f"Generating Fal.ai img2img ({settings['label']}{thinking_note}) using reference URL: {image_url}...")
         
-        # Prepare parameters
         arguments = {
-            "prompt": prompt,
-            "image_url": image_url,
-            "strength": strength,
+            "prompt": final_prompt,
+            "num_images": 1,
+            "output_format": "png",
         }
+        input_image_argument = settings.get("input_image_argument", "image_url")
+        if settings.get("input_image_list"):
+            arguments[input_image_argument] = [image_url]
+        else:
+            arguments[input_image_argument] = image_url
+
+        square_argument = settings.get("square_argument")
+        if square_argument:
+            arg_name, arg_value = square_argument
+            arguments[arg_name] = arg_value
+
+        arguments.update(settings.get("extra_arguments") or {})
+        if active_thinking:
+            arguments["thinking_level"] = active_thinking
         
         # Call Fal.ai
         result = fal_client.subscribe(model, arguments=arguments)
@@ -58,12 +142,18 @@ def generate_image_with_fal(prompt, input_image_path, output_path):
         print(f"Error during Fal.ai generation: {e}")
         return None
 
-def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None):
+def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None, fal_model_key=None, fal_thinking_level=None):
     """Generate a single image using Fal.ai (if key present), Google Imagen, or free Pollinations fallback."""
     # 1. Check if Fal.ai API key is configured and we have a reference image
     fal_key = os.getenv("FAL_KEY")
     if fal_key and reference_image and os.path.exists(reference_image):
-        local_path = generate_image_with_fal(prompt, reference_image, output_path)
+        local_path = generate_image_with_fal(
+            prompt,
+            reference_image,
+            output_path,
+            model_key=fal_model_key,
+            thinking_level=fal_thinking_level
+        )
         if local_path:
             return local_path
             
