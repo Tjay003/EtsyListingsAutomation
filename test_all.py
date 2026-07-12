@@ -1,7 +1,10 @@
 import os
+import json
+import tempfile
 import unittest
 import yaml
 from unittest.mock import MagicMock
+from fastapi.testclient import TestClient
 from src.ai_helper import clean_tags, write_etsy_listing, extract_variation_specs
 from src.image_gen import generate_prompts_from_inspo
 
@@ -151,6 +154,108 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertEqual(result[0]["size"], "S")
         self.assertEqual(result[1]["dimensions"], "Height: 40cm, Width: 30cm")
         mock_client.models.generate_content.assert_called_once()
+
+class TestHostedWorkspaceIsolation(unittest.TestCase):
+
+    def setUp(self):
+        from src import server
+
+        self.server = server
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.env_path = os.path.join(self.temp_dir.name, ".env")
+        self.env_patch = unittest.mock.patch.object(server, "env_path", self.env_path)
+        self.env_patch.start()
+
+        self.old_output_dir = os.environ.get("OUTPUT_DIR")
+        self.old_hosted_mode = os.environ.get("HOSTED_MODE")
+        os.environ["OUTPUT_DIR"] = self.temp_dir.name
+        os.environ.pop("HOSTED_MODE", None)
+
+        self.client = TestClient(server.app)
+
+    def tearDown(self):
+        if self.old_output_dir is None:
+            os.environ.pop("OUTPUT_DIR", None)
+        else:
+            os.environ["OUTPUT_DIR"] = self.old_output_dir
+
+        if self.old_hosted_mode is None:
+            os.environ.pop("HOSTED_MODE", None)
+        else:
+            os.environ["HOSTED_MODE"] = self.old_hosted_mode
+
+        self.env_patch.stop()
+        self.temp_dir.cleanup()
+
+    def write_product(self, token, slug, title):
+        product_dir = os.path.join(self.server.get_output_dir(token), slug)
+        image_dir = os.path.join(product_dir, "main_images")
+        os.makedirs(image_dir, exist_ok=True)
+        with open(os.path.join(image_dir, "main_1.jpg"), "wb") as f:
+            f.write(b"fake image bytes")
+        metadata = {
+            "title": title,
+            "price": "$10",
+            "specs": {},
+            "description_text": "",
+            "main_images": ["main_images/main_1.jpg"],
+            "variation_images": [],
+            "description_images": [],
+            "status": "queued",
+        }
+        with open(os.path.join(product_dir, "metadata.json"), "w", encoding="utf-8") as f:
+            json.dump(metadata, f)
+
+    def test_missing_token_uses_default_workspace(self):
+        self.write_product("default", "default-product", "Default Product")
+
+        response = self.client.get("/api/queue")
+
+        self.assertEqual(response.status_code, 200)
+        queue = response.json()["queue"]
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["slug"], "default-product")
+
+    def test_user_token_is_sanitized_and_limited(self):
+        token = self.server.sanitize_user_token("../tyrone abc123!!" + ("x" * 80))
+
+        self.assertTrue(token.startswith("tyroneabc123"))
+        self.assertLessEqual(len(token), 64)
+        self.assertNotIn(".", token)
+        self.assertNotIn("/", token)
+
+    def test_workspace_queue_and_images_are_isolated(self):
+        self.write_product("user-a", "bag-a", "Bag A")
+        self.write_product("user-b", "bag-b", "Bag B")
+
+        response_a = self.client.get("/api/queue", headers={"X-User-Token": "user-a"})
+        response_b = self.client.get("/api/queue", headers={"X-User-Token": "user-b"})
+
+        self.assertEqual([item["slug"] for item in response_a.json()["queue"]], ["bag-a"])
+        self.assertEqual([item["slug"] for item in response_b.json()["queue"]], ["bag-b"])
+
+        image_a = self.client.get("/api/product-image/bag-a/main_images/main_1.jpg?token=user-a")
+        image_b = self.client.get("/api/product-image/bag-a/main_images/main_1.jpg?token=user-b")
+
+        self.assertEqual(image_a.status_code, 200)
+        self.assertEqual(image_b.status_code, 404)
+
+    def test_product_image_path_traversal_is_blocked(self):
+        self.write_product("user-a", "bag-a", "Bag A")
+
+        with self.assertRaises(self.server.HTTPException):
+            self.server.resolve_product_path("user-a", "bag-a", "..", "metadata.json")
+
+        response = self.client.get("/api/product-image/bag-a/../metadata.json?token=user-a")
+
+        self.assertIn(response.status_code, (400, 404))
+
+    def test_hosted_mode_blocks_settings_update(self):
+        os.environ["HOSTED_MODE"] = "true"
+
+        response = self.client.post("/api/settings", json={"output_dir": "/tmp/elsewhere"})
+
+        self.assertEqual(response.status_code, 403)
 
 if __name__ == "__main__":
     unittest.main()

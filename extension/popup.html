@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AliExpress to Etsy Queue</title>
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="logo-area">
+        <svg class="logo-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" fill="#181818"></rect>
+            <path d="M7 17l5-5-5-5" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round"></path>
+            <path d="M12 17h5" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        <span class="logo-text">listings.automation</span>
+      </div>
+      
+      <div class="tabs-nav">
+        <button class="tab-btn active" id="tab-btn-generator">Queue</button>
+        <button class="tab-btn" id="tab-btn-settings">Settings</button>
+      </div>
+    </header>
+
+    <!-- MAIN CONTENT PANELS -->
+    <main class="app-main">
+      
+      <!-- GENERATOR TAB -->
+      <section class="tab-panel active" id="panel-generator">
+        <div class="queue-options">
+          <div class="queue-option" style="border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; margin-bottom: 8px;">
+            <label style="font-weight: 600;">
+              <input type="checkbox" id="chk-select-all" checked>
+              Select All
+            </label>
+          </div>
+          <div class="queue-option">
+            <label>
+              <input type="checkbox" id="chk-main" checked>
+              Main Images
+            </label>
+            <span class="badge loading" id="badge-main">...</span>
+          </div>
+          <div class="queue-option">
+            <label>
+              <input type="checkbox" id="chk-variation" checked>
+              Variation Images
+            </label>
+            <span class="badge loading" id="badge-variation">...</span>
+          </div>
+          <div class="queue-option">
+            <label>
+              <input type="checkbox" id="chk-description" checked>
+              Description Images
+            </label>
+            <span class="badge loading" id="badge-description">...</span>
+          </div>
+          <div class="queue-option">
+            <label>
+              <input type="checkbox" id="chk-text" checked>
+              Title, Specs & Text
+            </label>
+            <span class="badge" id="badge-text">Yes</span>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <button class="primary-btn" id="btn-send-queue">Add to Automation Queue</button>
+        </div>
+
+        <div id="status-container" class="status-msg hidden">
+          <div class="spinner"></div>
+          <span id="status-text">Ready to scrape active tab...</span>
+        </div>
+
+        <div id="error-container" class="error-msg hidden"></div>
+      </section>
+
+      <!-- SETTINGS TAB -->
+      <section class="tab-panel" id="panel-settings">
+        <div class="queue-options">
+          <div class="input-group" style="margin-bottom: 0;">
+            <label>Local Server API URL</label>
+            <input type="text" id="input-server-url" value="http://localhost:8000" placeholder="http://localhost:8000">
+          </div>
+          <div class="input-group" style="margin-bottom: 0;">
+            <label>User Token</label>
+            <input type="text" id="input-user-token" placeholder="e.g. tyrone-abc123">
+          </div>
+        </div>
+        <button class="primary-btn" id="btn-save-settings">Save Settings</button>
+        <div id="settings-save-status" class="settings-success-msg hidden">Settings saved successfully!</div>
+      </section>
+
+    </main>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

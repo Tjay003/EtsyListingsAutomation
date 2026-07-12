@@ -2,12 +2,13 @@ import os
 import sys
 import json
 import asyncio
+import re
 import shutil
 import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request
+from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,17 @@ from src.image_gen import (
 env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
 load_dotenv(dotenv_path=env_path)
 
-def get_output_dir():
+def sanitize_user_token(token: str | None = None) -> str:
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", token or "")[:64]
+    return sanitized or "default"
+
+def get_user_token(
+    x_user_token: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+) -> str:
+    return sanitize_user_token(x_user_token or token)
+
+def get_output_base_dir() -> str:
     # Read fresh from env
     load_dotenv(dotenv_path=env_path, override=True)
     out_dir = os.environ.get("OUTPUT_DIR")
@@ -45,6 +56,46 @@ def get_output_dir():
         out_dir = os.path.expanduser("~/Downloads/AliExpressQueue")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
+
+def get_output_dir(user_token: str = "default") -> str:
+    out_dir = os.path.join(get_output_base_dir(), sanitize_user_token(user_token))
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
+
+def is_hosted_mode() -> bool:
+    load_dotenv(dotenv_path=env_path, override=True)
+    return os.environ.get("HOSTED_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+def resolve_user_path(user_token: str, *parts: str) -> str:
+    root = os.path.abspath(get_output_dir(user_token))
+    target = os.path.abspath(os.path.join(root, *parts))
+    try:
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+def resolve_product_dir(user_token: str, slug: str) -> str:
+    if not slug or slug in {".", ".."} or "/" in slug or "\\" in slug:
+        raise HTTPException(status_code=400, detail="Invalid product slug")
+    return resolve_user_path(user_token, slug)
+
+def resolve_product_path(user_token: str, slug: str, *parts: str) -> str:
+    product_dir = os.path.abspath(resolve_product_dir(user_token, slug))
+    target = os.path.abspath(os.path.join(product_dir, *parts))
+    try:
+        if os.path.commonpath([product_dir, target]) != product_dir:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+def build_product_image_url(slug: str, image_path: str, user_token: str) -> str:
+    slug_part = urllib.parse.quote(slug, safe="")
+    image_part = urllib.parse.quote(image_path, safe="/")
+    token_part = urllib.parse.quote(sanitize_user_token(user_token), safe="")
+    return f"/api/product-image/{slug_part}/{image_part}?token={token_part}"
 
 app = FastAPI(title="Etsy Listings Automation API")
 
@@ -59,19 +110,24 @@ app.add_middleware(
 # Shared progress queue
 class ProgressStreamer:
     def __init__(self):
-        self.listeners = []
+        self.listeners = {}
 
-    def subscribe(self):
+    def subscribe(self, user_token: str = "default"):
         queue = asyncio.Queue()
-        self.listeners.append(queue)
+        token = sanitize_user_token(user_token)
+        self.listeners.setdefault(token, []).append(queue)
         return queue
 
-    def unsubscribe(self, queue):
-        if queue in self.listeners:
-            self.listeners.remove(queue)
+    def unsubscribe(self, queue, user_token: str = "default"):
+        token = sanitize_user_token(user_token)
+        listeners = self.listeners.get(token, [])
+        if queue in listeners:
+            listeners.remove(queue)
+        if not listeners and token in self.listeners:
+            del self.listeners[token]
 
-    def publish(self, data):
-        for queue in self.listeners:
+    def publish(self, data, user_token: str = "default"):
+        for queue in list(self.listeners.get(sanitize_user_token(user_token), [])):
             queue.put_nowait(data)
 
 streamer = ProgressStreamer()
@@ -89,10 +145,12 @@ class SettingsUpdateRequest(BaseModel):
 
 @app.get("/api/settings")
 def get_settings():
-    return {"output_dir": get_output_dir()}
+    return {"output_dir": get_output_base_dir(), "hosted_mode": is_hosted_mode()}
 
 @app.post("/api/settings")
 def update_settings(req: SettingsUpdateRequest):
+    if is_hosted_mode():
+        raise HTTPException(status_code=403, detail="Output directory is locked in hosted mode")
     try:
         set_key(env_path, "OUTPUT_DIR", req.output_dir)
         load_dotenv(dotenv_path=env_path, override=True)
@@ -192,8 +250,8 @@ def get_themes():
         return {"themes": []}
 
 @app.get("/api/status-stream")
-async def status_stream():
-    queue = streamer.subscribe()
+async def status_stream(user_token: str = Depends(get_user_token)):
+    queue = streamer.subscribe(user_token)
     async def event_generator():
         try:
             while True:
@@ -202,7 +260,7 @@ async def status_stream():
         except asyncio.CancelledError:
             pass
         finally:
-            streamer.unsubscribe(queue)
+            streamer.unsubscribe(queue, user_token)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -232,12 +290,13 @@ def download_image(url, dest_path):
         print(f"Failed to download {url}: {e}")
         return False
 
-def background_queue_product(req_data: dict):
+def background_queue_product(req_data: dict, user_token: str = "default"):
     try:
+        user_token = sanitize_user_token(user_token)
         title = req_data.get("title", "Untitled Product")
         slug = sanitize_filename(title)
         
-        out_root = get_output_dir()
+        out_root = get_output_dir(user_token)
         product_dir = os.path.join(out_root, slug)
         
         dirs = {
@@ -248,7 +307,7 @@ def background_queue_product(req_data: dict):
         for d in dirs.values():
             os.makedirs(d, exist_ok=True)
             
-        streamer.publish({"status": "progress", "message": f"Downloading assets for: {title[:30]}..."})
+        streamer.publish({"status": "progress", "message": f"Downloading assets for: {title[:30]}..."}, user_token)
 
         # Calculate total images to download
         main_list = req_data.get("main_images") or []
@@ -272,7 +331,7 @@ def background_queue_product(req_data: dict):
         }
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
-        streamer.publish({"status": "queue_updated"})
+        streamer.publish({"status": "queue_updated"}, user_token)
 
         # Helper to update progress inside loop
         def report_progress():
@@ -281,7 +340,7 @@ def background_queue_product(req_data: dict):
             metadata["download_progress"] = f"{downloaded_assets}/{total_assets}"
             with open(meta_path, "w", encoding="utf-8") as fm:
                 json.dump(metadata, fm, indent=4, ensure_ascii=False)
-            streamer.publish({"status": "queue_updated"})
+            streamer.publish({"status": "queue_updated"}, user_token)
 
         # Download Main Images
         for idx, img_url in enumerate(main_list):
@@ -339,23 +398,23 @@ def background_queue_product(req_data: dict):
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
 
-        streamer.publish({"status": "progress", "message": f"Finished downloading: {title[:30]}"})
+        streamer.publish({"status": "progress", "message": f"Finished downloading: {title[:30]}"}, user_token)
         # Broadcast final queue update
-        streamer.publish({"status": "queue_updated"})
+        streamer.publish({"status": "queue_updated"}, user_token)
 
 
     except Exception as e:
-        streamer.publish({"status": "error", "message": f"Queue error: {str(e)}"})
+        streamer.publish({"status": "error", "message": f"Queue error: {str(e)}"}, user_token)
 
 @app.post("/api/queue-product")
-def queue_product(req: QueueProductRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(background_queue_product, req.model_dump())
+def queue_product(req: QueueProductRequest, background_tasks: BackgroundTasks, user_token: str = Depends(get_user_token)):
+    background_tasks.add_task(background_queue_product, req.model_dump(), user_token)
     return {"status": "success", "message": "Product added to queue"}
 
 # --- QUEUE MANAGEMENT ---
 @app.get("/api/queue")
-def list_queue():
-    out_root = get_output_dir()
+def list_queue(user_token: str = Depends(get_user_token)):
+    out_root = get_output_dir(user_token)
     products = []
     if not os.path.exists(out_root):
         return {"queue": []}
@@ -384,7 +443,7 @@ def list_queue():
                             
                         # Set absolute path for serving static image in the dashboard
                         if thumb:
-                            meta["thumbnail_path"] = f"/api/product-image/{item}/{urllib.parse.quote(thumb)}"
+                            meta["thumbnail_path"] = build_product_image_url(item, thumb, user_token)
                         else:
                             meta["thumbnail_path"] = None
                             
@@ -394,17 +453,16 @@ def list_queue():
     return {"queue": products}
 
 @app.post("/api/delete-queue-item")
-def delete_queue_item(payload: dict):
+def delete_queue_item(payload: dict, user_token: str = Depends(get_user_token)):
     slug = payload.get("slug")
     if not slug:
         raise HTTPException(status_code=400, detail="Missing slug")
     
-    out_root = get_output_dir()
-    product_dir = os.path.join(out_root, slug)
+    product_dir = resolve_product_dir(user_token, slug)
     if os.path.exists(product_dir) and os.path.isdir(product_dir):
         try:
             shutil.rmtree(product_dir)
-            streamer.publish({"status": "queue_updated"})
+            streamer.publish({"status": "queue_updated"}, user_token)
             return {"status": "success", "message": "Product deleted successfully"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete product: {str(e)}")
@@ -413,10 +471,9 @@ def delete_queue_item(payload: dict):
 
 
 @app.get("/api/product-image/{slug}/{image_path:path}")
-def serve_product_image(slug: str, image_path: str):
-    out_root = get_output_dir()
-    file_path = os.path.join(out_root, slug, image_path)
-    if os.path.exists(file_path):
+def serve_product_image(slug: str, image_path: str, user_token: str = Depends(get_user_token)):
+    file_path = resolve_product_path(user_token, slug, image_path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Image not found")
 
@@ -746,10 +803,9 @@ def get_image_prompt_presets():
     }
 
 @app.post("/api/set-reference-image")
-def set_reference_image(req: ReferenceImageRequest):
+def set_reference_image(req: ReferenceImageRequest, user_token: str = Depends(get_user_token)):
     try:
-        out_root = get_output_dir()
-        product_dir = os.path.join(out_root, req.product_slug)
+        product_dir = resolve_product_dir(user_token, req.product_slug)
         meta_path = os.path.join(product_dir, "metadata.json")
 
         if not os.path.exists(meta_path):
@@ -771,7 +827,7 @@ def set_reference_image(req: ReferenceImageRequest):
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
 
-        streamer.publish({"status": "queue_updated"})
+        streamer.publish({"status": "queue_updated"}, user_token)
         return {
             "status": "success",
             "primary_reference_image": metadata["primary_reference_image"],
@@ -781,7 +837,7 @@ def set_reference_image(req: ReferenceImageRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: list, image_settings: dict, client):
+def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: list, image_settings: dict, client, user_token: str = "default"):
     selected_image_settings = resolve_fal_image_settings(
         (image_settings or {}).get("model_key")
     )
@@ -800,7 +856,7 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
     streamer.publish({
         "status": "progress",
         "message": "Executing image generation tasks..."
-    })
+    }, user_token)
     metadata["image_generation_settings"] = {
         "model_key": selected_image_settings["model_key"],
         "model": selected_image_settings["model"],
@@ -861,7 +917,7 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
                     streamer.publish({
                         "status": "progress",
                         "message": "No manual reference selected; falling back to the first available product image.",
-                    })
+                    }, user_token)
         elif task_type == "individual":
             if target_folder == "first_main" and metadata.get("main_images"):
                 target_images = [metadata["main_images"][0]]
@@ -877,7 +933,7 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
                 target_images = metadata.get(target_folder, [])
 
         if not target_images:
-            streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_label}, skipping."})
+            streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_label}, skipping."}, user_token)
             continue
 
         thinking_note = f" ({task_thinking_level} thinking)" if task_thinking_level else ""
@@ -887,12 +943,12 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
                 f"Task {t_idx+1}: Generating {len(target_images)} images for {target_label} "
                 f"with {task_image_settings['label']}{thinking_note}..."
             )
-        })
+        }, user_token)
 
         for img_idx, img_meta in enumerate(target_images):
             ref_path = get_abs_path(img_meta)
             if not os.path.exists(ref_path):
-                streamer.publish({"status": "progress", "message": f"   -> Reference image missing, skipping item {img_idx+1}."})
+                streamer.publish({"status": "progress", "message": f"   -> Reference image missing, skipping item {img_idx+1}."}, user_token)
                 continue
 
             visual_details = generate_image_prompt_details(ref_path, client)
@@ -902,7 +958,7 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
             out_filename = build_generated_filename(target_folder, task, t_idx, img_idx)
             out_path = os.path.join(product_dir, out_filename)
 
-            streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."})
+            streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."}, user_token)
 
             res_path = generate_image_with_imagen(
                 prompt=final_prompt,
@@ -919,10 +975,11 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
     metadata["generated_images"] = generated_images
     return generated_images
 
-def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None):
+def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None, user_token: str = "default"):
+    meta_path = None
     try:
-        out_root = get_output_dir()
-        product_dir = os.path.join(out_root, slug)
+        user_token = sanitize_user_token(user_token)
+        product_dir = resolve_product_dir(user_token, slug)
         meta_path = os.path.join(product_dir, "metadata.json")
         
         if not os.path.exists(meta_path):
@@ -935,8 +992,8 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
             
-        streamer.publish({"status": "queue_updated"})
-        streamer.publish({"status": "progress", "message": f"Processing item: {metadata.get('title')[:30]}..."})
+        streamer.publish({"status": "queue_updated"}, user_token)
+        streamer.publish({"status": "progress", "message": f"Processing item: {metadata.get('title')[:30]}..."}, user_token)
 
         client = get_genai_client()
         title = metadata.get("title", "")
@@ -944,22 +1001,22 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
 
         if mode == "images_only":
             if image_tasks:
-                run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client)
+                run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
             else:
-                streamer.publish({"status": "progress", "message": "AI Images Only selected, but no image tasks were configured."})
+                streamer.publish({"status": "progress", "message": "AI Images Only selected, but no image tasks were configured."}, user_token)
 
             metadata["status"] = "done"
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=4, ensure_ascii=False)
 
-            streamer.publish({"status": "queue_updated"})
-            streamer.publish({"status": "progress", "message": f"Successfully completed image generation: {title[:30]}"})
+            streamer.publish({"status": "queue_updated"}, user_token)
+            streamer.publish({"status": "progress", "message": f"Successfully completed image generation: {title[:30]}"}, user_token)
             return
 
         # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
         image_facts = metadata.get("image_facts")
         if image_facts is not None:
-            streamer.publish({"status": "progress", "message": "Phase 1: Reusing cached image facts."})
+            streamer.publish({"status": "progress", "message": "Phase 1: Reusing cached image facts."}, user_token)
         else:
             # Curate images to scan: description (up to 6), main (up to 3), variation (up to 2)
             desc_imgs = (metadata.get("description_images") or [])[:6]
@@ -976,7 +1033,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             scan_targets_abs = [os.path.join(product_dir, img_rel) for img_rel in scan_targets_rel if img_rel]
             
             if scan_targets_abs:
-                streamer.publish({"status": "progress", "message": f"Phase 1: Scanning {len(scan_targets_abs)} product images for visual specs..."})
+                streamer.publish({"status": "progress", "message": f"Phase 1: Scanning {len(scan_targets_abs)} product images for visual specs..."}, user_token)
                 try:
                     image_facts = extract_visual_specs(scan_targets_abs, client)
                     metadata["image_facts"] = image_facts
@@ -1001,7 +1058,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             for m in metadata.get("main_images", [])[:3]:
                 local_imgs.append(os.path.join(product_dir, m))
             if local_imgs:
-                streamer.publish({"status": "progress", "message": "No text description found. Fallback: visual description scan..."})
+                streamer.publish({"status": "progress", "message": "No text description found. Fallback: visual description scan..."}, user_token)
                 desc_input = generate_description_from_images(local_imgs, client)
             else:
                 desc_input = "Generic product details."
@@ -1009,11 +1066,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         # --- PHASE 1b: VARIATION SPECIFIC EXTRACTION ---
         variation_specs = metadata.get("variation_specs")
         if variation_specs is not None:
-            streamer.publish({"status": "progress", "message": "Phase 1b: Reusing cached variation specs."})
+            streamer.publish({"status": "progress", "message": "Phase 1b: Reusing cached variation specs."}, user_token)
         else:
             var_items = metadata.get("variation_images") or []
             if var_items:
-                streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(var_items)} variations for sizes & dimensions..."})
+                streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(var_items)} variations for sizes & dimensions..."}, user_token)
                 try:
                     variation_specs = extract_variation_specs(
                         variations=var_items,
@@ -1038,7 +1095,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                 variation_specs = []
 
         # --- PHASE 2 & 3: COPYWRITING & SELF-REVIEW ---
-        streamer.publish({"status": "progress", "message": "Phase 2: Generating enriched copywriting & running Phase 3 self-critique..."})
+        streamer.publish({"status": "progress", "message": "Phase 2: Generating enriched copywriting & running Phase 3 self-critique..."}, user_token)
         presets = load_listing_presets()
         
         etsy_listing = write_etsy_listing(
@@ -1059,7 +1116,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
 
         # Image generation if requested
         if mode == "listing_with_images" and image_tasks:
-            run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client)
+            run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
 
         metadata["status"] = "done"
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -1074,42 +1131,44 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         except Exception as txt_err:
             print(f"Warning: Could not write listing.txt: {txt_err}")
 
-        streamer.publish({"status": "queue_updated"})
-        streamer.publish({"status": "progress", "message": f"Successfully completed: {title[:30]}"})
+        streamer.publish({"status": "queue_updated"}, user_token)
+        streamer.publish({"status": "progress", "message": f"Successfully completed: {title[:30]}"}, user_token)
 
     except Exception as e:
         # Mark as failed
         try:
+            if not meta_path:
+                raise RuntimeError("No metadata path")
             with open(meta_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
             metadata["status"] = "failed"
             metadata["error"] = str(e)
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=4, ensure_ascii=False)
-            streamer.publish({"status": "queue_updated"})
+            streamer.publish({"status": "queue_updated"}, user_token)
         except Exception:
             pass
-        streamer.publish({"status": "error", "message": f"Pipeline error: {str(e)}"})
+        streamer.publish({"status": "error", "message": f"Pipeline error: {str(e)}"}, user_token)
 
 @app.post("/api/run-pipeline")
-def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks):
+def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks, user_token: str = Depends(get_user_token)):
     image_settings = req.image_settings.model_dump() if req.image_settings else {}
-    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings)
+    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings, user_token)
     return {"status": "success", "message": "Pipeline execution started"}
 
 class ExportZipRequest(BaseModel):
     product_slugs: list
 
 @app.post("/api/export-zip")
-def export_zip(req: ExportZipRequest):
+def export_zip(req: ExportZipRequest, user_token: str = Depends(get_user_token)):
     try:
-        out_root = get_output_dir()
+        out_root = get_output_dir(user_token)
         if not req.product_slugs:
             raise HTTPException(status_code=400, detail="No products selected")
             
         if len(req.product_slugs) == 1:
             slug = req.product_slugs[0]
-            product_dir = os.path.join(out_root, slug)
+            product_dir = resolve_product_dir(user_token, slug)
             if not os.path.exists(product_dir):
                 raise HTTPException(status_code=404, detail="Product not found")
             zip_path = os.path.join(out_root, f"{slug}.zip")
@@ -1121,7 +1180,7 @@ def export_zip(req: ExportZipRequest):
             export_dir = os.path.join(temp_dir, "AliExpress_Export")
             os.makedirs(export_dir)
             for slug in req.product_slugs:
-                src = os.path.join(out_root, slug)
+                src = resolve_product_dir(user_token, slug)
                 if os.path.exists(src):
                     shutil.copytree(src, os.path.join(export_dir, slug))
                     
@@ -1130,14 +1189,15 @@ def export_zip(req: ExportZipRequest):
             shutil.rmtree(temp_dir)
             return FileResponse(zip_path, media_type='application/zip', filename="AliExpress_Batch_Export.zip")
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/save-listing")
-def save_listing(req: ListingSaveRequest):
+def save_listing(req: ListingSaveRequest, user_token: str = Depends(get_user_token)):
     try:
-        out_root = get_output_dir()
-        product_dir = os.path.join(out_root, req.output_dir_name)
+        product_dir = resolve_product_dir(user_token, req.output_dir_name)
         meta_path = os.path.join(product_dir, "metadata.json")
         
         if not os.path.exists(meta_path):
@@ -1171,8 +1231,10 @@ def save_listing(req: ListingSaveRequest):
         except Exception as txt_err:
             print(f"Warning: Could not write listing.txt on save: {txt_err}")
             
-        streamer.publish({"status": "queue_updated"})
+        streamer.publish({"status": "queue_updated"}, user_token)
         return {"status": "success", "message": "Listing saved successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

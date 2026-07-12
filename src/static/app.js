@@ -63,6 +63,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnResetRules = document.getElementById("btn-reset-rules");
     const btnSavePresets = document.getElementById("btn-save-presets");
     const presetsStatus = document.getElementById("presets-status");
+    const workspaceTokenValue = document.getElementById("workspace-token-value");
+    const btnSwitchWorkspace = document.getElementById("btn-switch-workspace");
 
     // State
     let queueData = [];
@@ -71,6 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let activeListing = null;
     let isBulkRunning = false;
     let pipelineRunning = false;
+    let userToken = localStorage.getItem("userToken") || "";
 
     const modal = document.getElementById("app-modal");
     const modalTitle = document.getElementById("modal-title");
@@ -82,7 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const modalCancel = document.getElementById("modal-cancel");
     const modalConfirm = document.getElementById("modal-confirm");
 
-    function openModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false, input = null, hideCancel = false }) {
+    function openModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false, input = null, hideCancel = false, blocking = false }) {
         return new Promise(resolve => {
             let resolved = false;
 
@@ -90,6 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (resolved) return;
                 resolved = true;
                 modal.hidden = true;
+                modalClose.hidden = false;
                 modalConfirm.classList.remove("danger-btn");
                 modalConfirm.classList.add("primary-btn");
                 modalConfirm.removeEventListener("click", onConfirm);
@@ -112,7 +116,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 cleanup(true);
             };
-            const onCancel = () => cleanup(input ? null : false);
+            const onCancel = () => {
+                if (blocking) return;
+                cleanup(input ? null : false);
+            };
             const onOverlayClick = (event) => {
                 if (event.target === modal) onCancel();
             };
@@ -125,7 +132,8 @@ document.addEventListener("DOMContentLoaded", () => {
             modalMessage.textContent = message || "";
             modalConfirm.textContent = confirmText;
             modalCancel.textContent = cancelText;
-            modalCancel.hidden = hideCancel;
+            modalCancel.hidden = hideCancel || blocking;
+            modalClose.hidden = blocking;
 
             if (danger) {
                 modalConfirm.classList.remove("primary-btn");
@@ -169,11 +177,108 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    function sanitizeWorkspaceToken(value) {
+        return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+    }
+
+    function updateWorkspaceTokenUI() {
+        if (workspaceTokenValue) {
+            workspaceTokenValue.textContent = userToken || "Not set";
+            workspaceTokenValue.title = userToken || "";
+        }
+    }
+
+    function apiFetch(url, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (userToken) {
+            headers.set("X-User-Token", userToken);
+        }
+        return fetch(url, { ...options, headers });
+    }
+
+    function withTokenQuery(url) {
+        const finalUrl = new URL(url, window.location.origin);
+        if (userToken) {
+            finalUrl.searchParams.set("token", userToken);
+        }
+        return `${finalUrl.pathname}${finalUrl.search}${finalUrl.hash}`;
+    }
+
+    async function promptForWorkspaceToken(initialValue = "", forcePrompt = false) {
+        let nextToken = forcePrompt ? "" : sanitizeWorkspaceToken(initialValue || userToken);
+        while (!nextToken) {
+            const entered = await openModal({
+                title: "Enter Your Workspace Token",
+                message: "Your token keeps your queued products, images, and exports separate from other users.",
+                confirmText: "Continue",
+                input: {
+                    label: "User Token",
+                    placeholder: "e.g. tyrone-abc123",
+                    value: initialValue || ""
+                },
+                hideCancel: true,
+                blocking: true
+            });
+            nextToken = sanitizeWorkspaceToken(entered);
+        }
+
+        userToken = nextToken;
+        localStorage.setItem("userToken", userToken);
+        updateWorkspaceTokenUI();
+        return userToken;
+    }
+
+    function resetWorkspaceState() {
+        queueData = [];
+        selectedQueueItem = null;
+        activeListing = null;
+        queueList.innerHTML = "";
+        wsProductTitle.value = "";
+        wsProductSlug.value = "";
+        btnGenerate.disabled = true;
+        workspace.classList.add("disabled");
+        etsyTitle.value = "";
+        if (etsyCategory) etsyCategory.value = "";
+        etsyPrice.value = "";
+        etsyDesc.value = "";
+        tagsContainer.innerHTML = "";
+        imagesGrid.innerHTML = `<div class="image-placeholder">Run pipeline to generate images.</div>`;
+        variationsSpecsWrapper.style.display = "none";
+        variationsSpecsList.innerHTML = "";
+        renderReferencePicker(null);
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        setActivityDot(false);
+    }
+
+    async function switchWorkspace() {
+        const previousToken = userToken;
+        localStorage.removeItem("userToken");
+        userToken = "";
+        updateWorkspaceTokenUI();
+        await promptForWorkspaceToken(previousToken, true);
+        resetWorkspaceState();
+        loadQueue();
+        connectStatusStream();
+    }
+
+    if (btnSwitchWorkspace) {
+        btnSwitchWorkspace.addEventListener("click", switchWorkspace);
+    }
+
     // --- INITIALIZATION ---
-    loadSettings();
-    loadPresets();
-    loadQueue();
-    connectStatusStream();
+    async function initializeApp() {
+        updateWorkspaceTokenUI();
+        await promptForWorkspaceToken(userToken);
+        loadSettings();
+        loadPresets();
+        loadQueue();
+        connectStatusStream();
+    }
+
+    initializeApp();
 
     // --- CONSOLE SIDEBAR ---
     btnToggleConsole.addEventListener("click", () => {
@@ -224,16 +329,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- SETTINGS ---
     function loadSettings() {
-        fetch("/api/settings")
+        apiFetch("/api/settings")
             .then(r => r.json())
             .then(data => {
                 settingOutputDir.value = data.output_dir || "";
+                settingOutputDir.disabled = Boolean(data.hosted_mode);
+                btnSaveSettings.disabled = Boolean(data.hosted_mode);
+                if (data.hosted_mode) {
+                    settingsStatus.textContent = "Output directory is locked in hosted mode.";
+                    settingsStatus.style.display = "block";
+                } else {
+                    settingsStatus.style.display = "none";
+                }
             });
     }
 
     btnSaveSettings.addEventListener("click", () => {
         const payload = { output_dir: settingOutputDir.value.trim() };
-        fetch("/api/settings", {
+        apiFetch("/api/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -246,7 +359,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- LISTING PRESETS ---
     function loadPresets() {
-        fetch("/api/listing-presets")
+        apiFetch("/api/listing-presets")
             .then(r => r.json())
             .then(data => {
                 presetShopIntro.value = data.shop_intro || "";
@@ -283,7 +396,7 @@ document.addEventListener("DOMContentLoaded", () => {
             custom_policy: presetCustomPolicy.value.trim(),
             custom_prompt_rules: presetCustomPromptRules.value.trim()
         };
-        fetch("/api/listing-presets", {
+        apiFetch("/api/listing-presets", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -385,7 +498,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!imageModelSelect) return Promise.resolve();
 
         const current = getImageSettings();
-        return fetch("/api/image-generation-options")
+        return apiFetch("/api/image-generation-options")
             .then(r => r.json())
             .then(data => {
                 defaultImageSettings.model_key = data.default_model_key || defaultImageSettings.model_key;
@@ -463,7 +576,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function loadImagePromptPresets() {
-        return fetch("/api/image-prompt-presets")
+        return apiFetch("/api/image-prompt-presets")
             .then(r => r.json())
             .then(data => {
                 if (Array.isArray(data.presets) && data.presets.length > 0) {
@@ -506,7 +619,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     function loadGenerationPresets() {
         if (!presetSelector) return;
-        fetch("/api/generation-presets")
+        apiFetch("/api/generation-presets")
             .then(r => r.json())
             .then(data => {
                 window.generationPresets = data;
@@ -557,7 +670,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 image_settings: getImageSettings()
             };
             
-            fetch("/api/generation-presets", {
+            apiFetch("/api/generation-presets", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
@@ -582,7 +695,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             if (!confirmed) return;
             
-            fetch("/api/generation-presets/delete", {
+            apiFetch("/api/generation-presets/delete", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: name })
@@ -796,7 +909,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnRefreshQueue.addEventListener("click", loadQueue);
 
     function loadQueue() {
-        return fetch("/api/queue")
+        return apiFetch("/api/queue")
             .then(r => r.json())
             .then(data => {
                 queueData = data.queue || [];
@@ -855,7 +968,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const thumb = document.createElement("img");
             thumb.className = "queue-thumb";
             if (item.thumbnail_path) {
-                thumb.src = item.thumbnail_path;
+                thumb.src = withTokenQuery(item.thumbnail_path);
             }
 
             // Info
@@ -997,7 +1110,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             btnDelete.disabled = true;
             btnDelete.textContent = "Deleting...";
-            fetch("/api/delete-queue-item", {
+            apiFetch("/api/delete-queue-item", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ slug: item.slug })
@@ -1022,8 +1135,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function getProductImageSrc(slug, imagePath, bustCache = false) {
-        const cacheParam = bustCache ? `?t=${Date.now()}` : "";
-        return `/api/product-image/${slug}/${encodeURIComponent(imagePath)}${cacheParam}`;
+        const imageUrl = withTokenQuery(`/api/product-image/${encodeURIComponent(slug)}/${encodeURIComponent(imagePath)}`);
+        if (!bustCache) return imageUrl;
+        const separator = imageUrl.includes("?") ? "&" : "?";
+        return `${imageUrl}${separator}t=${Date.now()}`;
     }
 
     function getImagePath(imageEntry) {
@@ -1183,7 +1298,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (button) button.disabled = true;
 
         try {
-            const res = await fetch("/api/set-reference-image", {
+            const res = await apiFetch("/api/set-reference-image", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -1527,7 +1642,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnExportSelected.textContent = "Zipping...";
         btnExportSelected.disabled = true;
 
-        fetch("/api/export-zip", {
+        apiFetch("/api/export-zip", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({ product_slugs: slugs })
@@ -1572,7 +1687,7 @@ document.addEventListener("DOMContentLoaded", () => {
             logConsole("system", `Bulk run: Starting ${slug} (${i + 1}/${checked.length})`);
 
             try {
-                await fetch("/api/run-pipeline", {
+                await apiFetch("/api/run-pipeline", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -1615,7 +1730,7 @@ document.addEventListener("DOMContentLoaded", () => {
             // Poll metadata until status changes from "processing"
             const poll = setInterval(async () => {
                 try {
-                    const res = await fetch("/api/queue");
+                    const res = await apiFetch("/api/queue");
                     const data = await res.json();
                     const item = (data.queue || []).find(q => q.slug === slug);
                     if (item && item.status !== "processing" && item.status !== "queued") {
@@ -1685,7 +1800,7 @@ document.addEventListener("DOMContentLoaded", () => {
         logConsole("system", `Triggering pipeline for ${slug}...`);
         btnGenerate.disabled = true;
 
-        fetch("/api/run-pipeline", {
+        apiFetch("/api/run-pipeline", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -1700,7 +1815,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- EVENT STREAM ---
     function connectStatusStream() {
         if (eventSource) return;
-        eventSource = new EventSource("/api/status-stream");
+        eventSource = new EventSource(withTokenQuery("/api/status-stream"));
 
         eventSource.onopen = () => logConsole("system", "Connected to pipeline events.");
 
@@ -1791,7 +1906,7 @@ document.addEventListener("DOMContentLoaded", () => {
             itemRow.className = "variation-spec-item";
             itemRow.dataset.index = idx;
             
-            const imgSrc = `/api/product-image/${item.slug}/${encodeURIComponent(localPath)}`;
+            const imgSrc = getProductImageSrc(item.slug, localPath);
             
             itemRow.innerHTML = `
                 <img class="variation-spec-thumb" src="${imgSrc}" alt="${alt}">
@@ -1897,7 +2012,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
 
-        fetch("/api/save-listing", {
+        apiFetch("/api/save-listing", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({

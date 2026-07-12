@@ -32,27 +32,48 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Settings elements
   const inputServerUrl = document.getElementById("input-server-url");
+  const inputUserToken = document.getElementById("input-user-token");
   const btnSaveSettings = document.getElementById("btn-save-settings");
   const settingsSaveStatus = document.getElementById("settings-save-status");
 
+  function sanitizeUserToken(value) {
+    return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  }
+
   // Load Settings on start
   let serverUrl = "http://localhost:8000";
-  chrome.storage.local.get(["serverUrl"], (result) => {
+  let userToken = "";
+  chrome.storage.local.get(["serverUrl", "userToken"], (result) => {
     if (result.serverUrl) {
       serverUrl = result.serverUrl;
       inputServerUrl.value = serverUrl;
     }
+    if (result.userToken) {
+      userToken = sanitizeUserToken(result.userToken);
+      inputUserToken.value = userToken;
+    }
   });
 
   // Save Settings
-  btnSaveSettings.addEventListener("click", () => {
+  function saveSettings(showStatus = false) {
     const url = inputServerUrl.value.trim();
-    chrome.storage.local.set({ serverUrl: url }, () => {
+    const token = sanitizeUserToken(inputUserToken.value.trim());
+    inputUserToken.value = token;
+    chrome.storage.local.set({ serverUrl: url, userToken: token }, () => {
       serverUrl = url;
-      settingsSaveStatus.classList.remove("hidden");
-      setTimeout(() => settingsSaveStatus.classList.add("hidden"), 2000);
+      userToken = token;
+      if (showStatus) {
+        settingsSaveStatus.classList.remove("hidden");
+        setTimeout(() => settingsSaveStatus.classList.add("hidden"), 2000);
+      }
     });
+  }
+
+  btnSaveSettings.addEventListener("click", () => {
+    saveSettings(true);
   });
+  inputServerUrl.addEventListener("change", () => saveSettings());
+  inputUserToken.addEventListener("change", () => saveSettings());
 
   // Switch tabs
   tabBtnGen.addEventListener("click", () => {
@@ -163,6 +184,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   // --- ADD TO QUEUE ---
   btnSendQueue.addEventListener("click", async () => {
     hideMessage();
+    userToken = sanitizeUserToken(inputUserToken.value.trim() || userToken);
+    inputUserToken.value = userToken;
+    if (!userToken) {
+      showError("Please set a User Token in Settings before adding products to the queue.");
+      tabBtnSettings.click();
+      return;
+    }
+    chrome.storage.local.set({ userToken });
     
     btnSendQueue.disabled = true;
     const origText = btnSendQueue.textContent;
@@ -249,7 +278,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         fetch(`${serverUrl}/api/queue-product`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-User-Token": userToken
           },
           body: JSON.stringify(payload)
         })

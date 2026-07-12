@@ -10,6 +10,7 @@ __pycache__/
 # Testing HTML dumps (AliExpress pages)
 *.html
 !src/static/*.html
+!extension/*.html
 *_files/
 
 # Scraped assets and outputs
