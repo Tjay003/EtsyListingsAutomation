@@ -61,5 +61,59 @@
             "model_key": "flux-kontext-pro",
             "thinking_level": "off"
         }
+    },
+    "nanoBananaTesting": {
+        "mode": "images_only",
+        "image_tasks": [
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "auto_product_staging",
+                "model_key": "nano-banana-2-edit",
+                "thinking_level": "inherit"
+            },
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "auto_in_use",
+                "model_key": "",
+                "thinking_level": "inherit"
+            }
+        ],
+        "image_settings": {
+            "model_key": "nano-banana-2-edit",
+            "thinking_level": "high"
+        }
+    },
+    "bag": {
+        "mode": "listing_with_images",
+        "image_tasks": [
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "auto_product_staging",
+                "model_key": "",
+                "thinking_level": "inherit"
+            },
+            {
+                "task_type": "individual",
+                "target": "selected_reference",
+                "prompt": "",
+                "prompt_mode": "preset",
+                "prompt_preset": "auto_in_use",
+                "model_key": "",
+                "thinking_level": "inherit"
+            }
+        ],
+        "image_settings": {
+            "model_key": "nano-banana-2-edit",
+            "thinking_level": "high"
+        }
     }
 }

@@ -22,6 +22,7 @@ scratch_free_test.png
 .vscode/
 .idea/
 .gemini/
+.kiro/
 
 # Local agent memory imports/staging
 antigravity-global-memory/
