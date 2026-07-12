@@ -6,7 +6,7 @@ from PIL import Image
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-from typing import List
+from typing import Any, Dict, List
 from dotenv import load_dotenv
 
 # Optional OpenAI fallback import
@@ -67,12 +67,31 @@ load_dotenv()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 # Define the structured output format for the Etsy listing
+class SEOStrategy(BaseModel):
+    primary_product_noun: str = Field(default="", description="Plain product noun buyers would search, e.g. crossbody bag, ceramic mug")
+    top_traits: List[str] = Field(default_factory=list, description="Objective traits from source facts such as color, material, size, style, shape")
+    buyer_intents: List[str] = Field(default_factory=list, description="Realistic buyer intents or use cases for this product")
+    audience: List[str] = Field(default_factory=list, description="Relevant audience segments only when supported by the product")
+    primary_keywords: List[str] = Field(default_factory=list, description="Most important buyer search phrases for Etsy and Google")
+    long_tail_keywords: List[str] = Field(default_factory=list, description="Specific multi-word phrases likely to convert")
+    tag_keywords: List[str] = Field(default_factory=list, description="Candidate Etsy tags, preferably 20 characters or less")
+    google_keywords: List[str] = Field(default_factory=list, description="Natural phrases useful for Google title and description")
+    pinterest_keywords: List[str] = Field(default_factory=list, description="Broad and exact phrases useful for Pinterest discovery")
+
 class EtsyListing(BaseModel):
     title: str = Field(description="Search-optimized Etsy product title, maximum 140 characters")
     description: str = Field(description="High-converting product description highlighting key features and specifications. Make sure to use double newlines (\\n\\n) between paragraphs, features, and specs to avoid a single dense block of text.")
     tags: List[str] = Field(description="13 relevant search keywords or short tag phrases for Etsy listings")
     suggested_price: str = Field(description="Suggested Etsy retail price in USD, e.g., '$24.99'")
     category: str = Field(description="The most accurate Etsy category path or specific category name (e.g., 'Home & Living > Home Decor' or 'Crossbody Bags')")
+    seo_strategy: SEOStrategy = Field(default_factory=SEOStrategy, description="Keyword and positioning strategy used to write the listing")
+    google_meta_title: str = Field(default="", description="Google-focused title, ideally 50-60 characters and readable")
+    google_meta_description: str = Field(default="", description="Google-focused meta description, ideally 145-160 characters")
+    pinterest_title: str = Field(default="", description="Pinterest product Pin title, readable and keyword-rich")
+    pinterest_description: str = Field(default="", description="Pinterest product Pin description with broad and exact discovery phrases")
+    image_alt_text: List[str] = Field(default_factory=list, description="Accurate SEO alt text ideas for listing/product images")
+    seo_quality_score: int = Field(default=0, description="Deterministic SEO QA score from 0 to 100")
+    seo_qa_notes: List[str] = Field(default_factory=list, description="Issues or warnings from deterministic SEO QA")
 
 class VisualSpecs(BaseModel):
     dimensions: str = Field(description="Exact measurements extracted from text/labels in the images, or empty string if not clearly shown")
@@ -96,6 +115,7 @@ class ReviewVerdict(BaseModel):
     title_issues: str = Field(description="Feedback/issues about title quality, or empty string if perfect")
     description_issues: str = Field(description="Feedback/issues about description (e.g., missing dimensions or incorrect facts), or empty string if perfect")
     tag_issues: str = Field(description="Feedback/issues about tags (length, quantity, search relevance), or empty string if perfect")
+    seo_issues: str = Field(default="", description="Feedback/issues about Google/Pinterest metadata and overall SEO strategy, or empty string if perfect")
 
 def get_genai_client():
     """Initialize and return the Google GenAI client, supporting API Key and GCP Vertex AI."""
@@ -487,6 +507,459 @@ def clean_tags(tags, client):
             
     return final_tags[:13]
 
+TAG_COUNT = 13
+MAX_ETSY_TAG_CHARS = 20
+MAX_ETSY_TITLE_CHARS = 140
+GOOGLE_TITLE_CHARS = 60
+GOOGLE_DESCRIPTION_CHARS = 155
+PINTEREST_TITLE_CHARS = 100
+PINTEREST_DESCRIPTION_CHARS = 500
+
+PROHIBITED_LISTING_TERMS = [
+    "aliexpress",
+    "china",
+    "factory",
+    "wholesale",
+    "dropship",
+    "dropshipping",
+    "bulk",
+    "mass production",
+    "shipping tracking",
+]
+
+SUBJECTIVE_TITLE_TERMS = [
+    "beautiful",
+    "perfect",
+    "wonderful",
+    "amazing",
+    "best",
+    "must have",
+]
+
+STOP_WORDS = {
+    "and", "for", "with", "the", "a", "an", "of", "to", "in", "on", "by",
+    "from", "your", "my", "our", "this", "that", "new", "hot", "sale"
+}
+
+def _model_to_dict(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "dict"):
+        return value.dict()
+    return value
+
+def _as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        return [v.strip() for v in re.split(r"[,;\n]+", value) if v.strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+def _dedupe_preserve_order(items):
+    seen = set()
+    result = []
+    for item in items:
+        clean = re.sub(r"\s+", " ", str(item).strip())
+        if not clean:
+            continue
+        key = clean.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(clean)
+    return result
+
+def _strip_prohibited_terms(text):
+    clean = str(text or "")
+    for term in PROHIBITED_LISTING_TERMS:
+        clean = re.sub(re.escape(term), "", clean, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", clean).strip()
+
+def _trim_at_word(text, limit):
+    clean = re.sub(r"\s+", " ", str(text or "")).strip(" |,-")
+    if len(clean) <= limit:
+        return clean
+    trimmed = clean[:limit].rsplit(" ", 1)[0].strip(" |,-")
+    return trimmed or clean[:limit].strip(" |,-")
+
+def _first_sentence(text):
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not clean:
+        return ""
+    match = re.search(r"(.+?[.!?])\s", clean + " ")
+    return match.group(1).strip() if match else clean
+
+def _format_image_facts(image_facts):
+    if not image_facts:
+        return "None extracted"
+    lines = [f"{k.upper()}: {v}" for k, v in image_facts.items() if v]
+    return "\n".join(lines) if lines else "None extracted"
+
+def _format_variation_specs(variation_specs):
+    if not variation_specs:
+        return "None extracted"
+    lines = []
+    for var in variation_specs:
+        if not isinstance(var, dict):
+            continue
+        details = [
+            f"Size = {var.get('size') or 'N/A'}",
+            f"Dimensions = {var.get('dimensions') or 'N/A'}",
+        ]
+        other = var.get("other_details")
+        if other:
+            details.append(f"Details = {other}")
+        lines.append(f"- {var.get('name')}: {', '.join(details)}")
+    return "\n".join(lines) if lines else "None extracted"
+
+def _guess_primary_product_noun(title, description):
+    text = f"{title} {description}".lower()
+    product_markers = [
+        "crossbody bag", "shoulder bag", "tote bag", "handbag", "backpack", "wallet",
+        "necklace", "bracelet", "earrings", "ring", "dress", "shirt", "jacket",
+        "mug", "cup", "lamp", "vase", "organizer", "kitchen tool", "spatula",
+        "knife", "blanket", "pillow", "rug", "phone case", "pet collar"
+    ]
+    for marker in product_markers:
+        if marker in text:
+            return marker
+    words = [
+        word for word in re.findall(r"[a-z0-9]+", title.lower())
+        if len(word) > 2 and word not in STOP_WORDS
+    ]
+    return " ".join(words[:2]) if words else "product"
+
+def _fallback_seo_strategy(title, description, image_facts=None, variation_specs=None):
+    primary_noun = _guess_primary_product_noun(title, description)
+    fact_terms = []
+    for value in (image_facts or {}).values():
+        fact_terms.extend(re.findall(r"[A-Za-z][A-Za-z0-9 -]{2,24}", str(value)))
+    title_terms = [
+        word for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9 -]{2,24}", str(title))
+        if word.lower() not in STOP_WORDS
+    ]
+    candidates = _dedupe_preserve_order([primary_noun, *title_terms[:8], *fact_terms[:8]])
+    return {
+        "primary_product_noun": primary_noun,
+        "top_traits": candidates[1:6],
+        "buyer_intents": ["everyday use"],
+        "audience": [],
+        "primary_keywords": candidates[:6],
+        "long_tail_keywords": candidates[:8],
+        "tag_keywords": candidates[:18],
+        "google_keywords": candidates[:8],
+        "pinterest_keywords": candidates[:10],
+    }
+
+def _coerce_seo_strategy(strategy, title="", description="", image_facts=None, variation_specs=None):
+    if isinstance(strategy, SEOStrategy):
+        data = _model_to_dict(strategy)
+    elif isinstance(strategy, dict):
+        data = dict(strategy)
+    else:
+        data = {}
+
+    fallback = _fallback_seo_strategy(title, description, image_facts, variation_specs)
+    for key, value in fallback.items():
+        if key == "primary_product_noun":
+            data[key] = str(data.get(key) or value).strip()
+        else:
+            data[key] = _dedupe_preserve_order(_as_list(data.get(key)) or value)
+    return data
+
+def build_seo_strategy(title, description, image_facts=None, variation_specs=None, client=None):
+    """Create a product-specific keyword strategy before drafting the listing."""
+    if not client:
+        client = get_genai_client()
+
+    facts_str = _format_image_facts(image_facts)
+    var_str = _format_variation_specs(variation_specs)
+    prompt = (
+        "Create a practical SEO strategy for an Etsy product listing using only the facts provided.\n"
+        "Do not invent materials, dimensions, personalization, handmade status, brand names, or target audiences.\n"
+        "Do not use supplier/platform terms such as AliExpress, China, factory, wholesale, bulk, or dropshipping.\n\n"
+        f"Original Title: {title}\n"
+        f"Scraped Description/Info: {description}\n\n"
+        "Image Facts:\n"
+        f"{facts_str}\n\n"
+        "Variation Specifications:\n"
+        f"{var_str}\n\n"
+        "Strategy rules:\n"
+        "- primary_product_noun must be a plain buyer-searchable noun phrase.\n"
+        "- top_traits must be objective traits only: color, material, size, shape, style, function, capacity, or texture.\n"
+        "- primary_keywords and long_tail_keywords should be natural buyer phrases, not keyword salad.\n"
+        "- tag_keywords should include at least 18 candidates where possible, each preferably 20 characters or less.\n"
+        "- Include a mix of exact product phrases, broad category phrases, use-case phrases, and style/material phrases.\n"
+        "- Pinterest keywords may be broader than Etsy tags, but must still describe this product.\n\n"
+        "Output strictly as JSON matching the SEOStrategy schema."
+    )
+
+    openai_client = get_openai_client()
+    if openai_client:
+        try:
+            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response = openai_client.chat.completions.create(
+                model=openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_tokens=900
+            )
+            return _coerce_seo_strategy(
+                json.loads(response.choices[0].message.content),
+                title,
+                description,
+                image_facts,
+                variation_specs,
+            )
+        except Exception as e:
+            print(f"Error building SEO strategy via OpenAI: {e}. Falling back to Gemini...")
+
+    try:
+        response = generate_content_with_retry(
+            client=client,
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=SEOStrategy,
+            )
+        )
+        return _coerce_seo_strategy(
+            json.loads(response.text),
+            title,
+            description,
+            image_facts,
+            variation_specs,
+        )
+    except Exception as e:
+        print(f"Error building SEO strategy: {e}")
+        return _fallback_seo_strategy(title, description, image_facts, variation_specs)
+
+def _tag_phrase_candidates(listing_data, seo_strategy):
+    strategy = _coerce_seo_strategy(seo_strategy)
+    candidates = []
+    candidates.extend(_as_list(listing_data.get("tags")))
+    for key in [
+        "tag_keywords",
+        "primary_keywords",
+        "long_tail_keywords",
+        "top_traits",
+        "buyer_intents",
+        "pinterest_keywords",
+    ]:
+        candidates.extend(_as_list(strategy.get(key)))
+
+    noun = strategy.get("primary_product_noun")
+    if noun:
+        candidates.append(noun)
+        for trait in _as_list(strategy.get("top_traits"))[:6]:
+            candidates.append(f"{trait} {noun}")
+            candidates.append(f"{noun} {trait}")
+    return candidates
+
+def _simple_tag_cleanup(tag):
+    clean = _strip_prohibited_terms(tag).lower()
+    clean = re.sub(r"[^a-z0-9 &-]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip(" -&")
+    if len(clean) <= MAX_ETSY_TAG_CHARS:
+        return clean
+    words = [word for word in clean.split() if word not in STOP_WORDS]
+    shortened = " ".join(words)
+    if len(shortened) <= MAX_ETSY_TAG_CHARS:
+        return shortened
+    while words and len(" ".join(words)) > MAX_ETSY_TAG_CHARS:
+        words.pop()
+    return " ".join(words).strip() or clean[:MAX_ETSY_TAG_CHARS].strip()
+
+def complete_tags(listing_data, seo_strategy, client):
+    raw_candidates = _tag_phrase_candidates(listing_data, seo_strategy)
+    candidate_tags = []
+    for candidate in raw_candidates:
+        cleaned = _simple_tag_cleanup(candidate)
+        if cleaned:
+            candidate_tags.append(cleaned)
+
+    cleaned_tags = clean_tags(candidate_tags, client)
+    if len(cleaned_tags) >= TAG_COUNT:
+        return cleaned_tags[:TAG_COUNT]
+
+    strategy = _coerce_seo_strategy(seo_strategy)
+    noun = _simple_tag_cleanup(strategy.get("primary_product_noun") or "product")
+    fallback_tags = [
+        noun,
+        f"{noun} gift",
+        f"{noun} idea",
+        f"{noun} style",
+        "boutique find",
+        "everyday item",
+        "minimalist gift",
+        "modern style",
+        "useful gift",
+        "gift idea",
+        "unique find",
+        "curated gift",
+        "daily use",
+    ]
+    for tag in fallback_tags:
+        cleaned = _simple_tag_cleanup(tag)
+        if cleaned and cleaned not in cleaned_tags:
+            cleaned_tags.append(cleaned)
+        if len(cleaned_tags) >= TAG_COUNT:
+            break
+    return cleaned_tags[:TAG_COUNT]
+
+def _clean_listing_title(title):
+    clean = _strip_prohibited_terms(title)
+    clean = re.sub(r"\s*[\|/]\s*", ", ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,-")
+    return _trim_at_word(clean, MAX_ETSY_TITLE_CHARS)
+
+def _compact_description(description, limit):
+    sentence = _first_sentence(description)
+    if not sentence:
+        return ""
+    return _trim_at_word(sentence, limit)
+
+def _ensure_seo_metadata(listing_data, seo_strategy):
+    strategy = _coerce_seo_strategy(seo_strategy)
+    title = _clean_listing_title(listing_data.get("title", ""))
+    description = listing_data.get("description", "")
+    noun = strategy.get("primary_product_noun") or _guess_primary_product_noun(title, description)
+    keywords = _dedupe_preserve_order(
+        _as_list(strategy.get("google_keywords"))
+        + _as_list(strategy.get("primary_keywords"))
+        + _as_list(strategy.get("pinterest_keywords"))
+    )
+
+    listing_data["title"] = title
+    if not listing_data.get("google_meta_title"):
+        listing_data["google_meta_title"] = _trim_at_word(title, GOOGLE_TITLE_CHARS)
+    else:
+        listing_data["google_meta_title"] = _trim_at_word(listing_data.get("google_meta_title"), GOOGLE_TITLE_CHARS)
+
+    if not listing_data.get("google_meta_description"):
+        meta_desc = _compact_description(description, GOOGLE_DESCRIPTION_CHARS)
+        if not meta_desc:
+            meta_desc = _trim_at_word(f"{title} with {', '.join(keywords[:3])}", GOOGLE_DESCRIPTION_CHARS)
+        listing_data["google_meta_description"] = meta_desc
+    else:
+        listing_data["google_meta_description"] = _trim_at_word(listing_data.get("google_meta_description"), GOOGLE_DESCRIPTION_CHARS)
+
+    if not listing_data.get("pinterest_title"):
+        listing_data["pinterest_title"] = _trim_at_word(title, PINTEREST_TITLE_CHARS)
+    else:
+        listing_data["pinterest_title"] = _trim_at_word(listing_data.get("pinterest_title"), PINTEREST_TITLE_CHARS)
+
+    if not listing_data.get("pinterest_description"):
+        pinterest_terms = ", ".join(keywords[:6])
+        base = _first_sentence(description) or title
+        if pinterest_terms:
+            base = f"{base} Discover details for {pinterest_terms}."
+        listing_data["pinterest_description"] = _trim_at_word(base, PINTEREST_DESCRIPTION_CHARS)
+    else:
+        listing_data["pinterest_description"] = _trim_at_word(listing_data.get("pinterest_description"), PINTEREST_DESCRIPTION_CHARS)
+
+    alt_text = _as_list(listing_data.get("image_alt_text"))
+    if not alt_text:
+        trait_text = ", ".join(_as_list(strategy.get("top_traits"))[:3])
+        alt_base = f"{title}"
+        if trait_text and trait_text.lower() not in alt_base.lower():
+            alt_base = f"{alt_base} showing {trait_text}"
+        alt_text = [
+            _trim_at_word(alt_base, 120),
+            _trim_at_word(f"Close view of {noun} details", 120),
+            _trim_at_word(f"{noun} styled for product listing photo", 120),
+        ]
+    listing_data["image_alt_text"] = _dedupe_preserve_order(alt_text)[:5]
+    listing_data["seo_strategy"] = strategy
+    return listing_data
+
+def score_listing_seo(listing_data):
+    score = 100
+    notes = []
+    title = listing_data.get("title", "")
+    title_words = re.findall(r"\w+", title)
+    title_lower = title.lower()
+    tags = listing_data.get("tags") or []
+    description = listing_data.get("description", "")
+    first_sentence = _first_sentence(description)
+
+    if not title:
+        score -= 20
+        notes.append("Missing Etsy title.")
+    if len(title) > MAX_ETSY_TITLE_CHARS:
+        score -= 15
+        notes.append("Etsy title is over 140 characters.")
+    if len(title_words) > 15:
+        score -= 8
+        notes.append("Etsy title is over the preferred 15-word readability target.")
+    if "|" in title:
+        score -= 6
+        notes.append("Etsy title still uses pipe-separated keyword formatting.")
+    if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS):
+        score -= 5
+        notes.append("Etsy title includes subjective wording better suited for the description.")
+    if len(set(word.lower() for word in title_words)) < max(1, len(title_words) - 2):
+        score -= 5
+        notes.append("Etsy title repeats too many words.")
+    if any(term in f"{title} {description}".lower() for term in PROHIBITED_LISTING_TERMS):
+        score -= 20
+        notes.append("Listing contains prohibited supplier/platform language.")
+
+    if len(tags) != TAG_COUNT:
+        score -= 15
+        notes.append("Etsy tags should contain exactly 13 entries.")
+    if any(len(str(tag)) > MAX_ETSY_TAG_CHARS for tag in tags):
+        score -= 15
+        notes.append("One or more Etsy tags exceed 20 characters.")
+    if len({str(tag).lower() for tag in tags}) != len(tags):
+        score -= 8
+        notes.append("Etsy tags include duplicates.")
+
+    if not first_sentence:
+        score -= 10
+        notes.append("Description is missing a clear first sentence.")
+    elif len(first_sentence) > 180:
+        score -= 5
+        notes.append("First description sentence is long; keep the product identity clear early.")
+
+    for field, label, limit in [
+        ("google_meta_title", "Google meta title", GOOGLE_TITLE_CHARS),
+        ("google_meta_description", "Google meta description", GOOGLE_DESCRIPTION_CHARS),
+        ("pinterest_title", "Pinterest title", PINTEREST_TITLE_CHARS),
+        ("pinterest_description", "Pinterest description", PINTEREST_DESCRIPTION_CHARS),
+    ]:
+        value = listing_data.get(field, "")
+        if not value:
+            score -= 5
+            notes.append(f"{label} is missing.")
+        elif len(value) > limit:
+            score -= 3
+            notes.append(f"{label} is longer than the preferred limit.")
+
+    if not listing_data.get("image_alt_text"):
+        score -= 5
+        notes.append("Image alt text suggestions are missing.")
+
+    score = max(0, min(100, score))
+    return score, notes
+
+def finalize_listing_seo(listing_data, seo_strategy, client):
+    listing_data = dict(listing_data or {})
+    strategy = _coerce_seo_strategy(
+        listing_data.get("seo_strategy") or seo_strategy,
+        listing_data.get("title", ""),
+        listing_data.get("description", ""),
+    )
+    listing_data["seo_strategy"] = strategy
+    listing_data["tags"] = complete_tags(listing_data, strategy, client)
+    listing_data = _ensure_seo_metadata(listing_data, strategy)
+    score, notes = score_listing_seo(listing_data)
+    listing_data["seo_quality_score"] = score
+    listing_data["seo_qa_notes"] = notes
+    return listing_data
+
 def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
     """Inject preset add-ons into the listing description and apply policy override."""
     desc = listing_data.get("description", "").strip()
@@ -522,13 +995,14 @@ def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
     listing_data["description"] = desc
     return listing_data
 
-def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts: dict, client=None) -> dict:
+def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts: dict, seo_strategy: dict = None, client=None) -> dict:
     """Evaluate generated listing quality against image_facts and scraped text, doing a single correction pass if issues are found."""
     if not client:
         client = get_genai_client()
 
     scraped_part = scraped_text or "None provided"
     facts_part = json.dumps(image_facts, indent=2) if image_facts else "None extracted from images"
+    strategy_part = json.dumps(seo_strategy or listing_data.get("seo_strategy") or {}, indent=2)
 
     prompt = (
         "You are a strict QA critic for Etsy listings.\n"
@@ -538,15 +1012,23 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         f"Category: {listing_data.get('category', '')}\n"
         f"Price: {listing_data.get('suggested_price', '')}\n"
         f"Tags: {', '.join(listing_data.get('tags', []))}\n"
+        f"Google Meta Title: {listing_data.get('google_meta_title', '')}\n"
+        f"Google Meta Description: {listing_data.get('google_meta_description', '')}\n"
+        f"Pinterest Title: {listing_data.get('pinterest_title', '')}\n"
+        f"Pinterest Description: {listing_data.get('pinterest_description', '')}\n"
+        f"Image Alt Text: {json.dumps(listing_data.get('image_alt_text', []))}\n"
         f"Description: {listing_data.get('description', '')}\n\n"
+        "SEO Strategy:\n"
+        f"{strategy_part}\n\n"
         "Scraped Info:\n"
         f"{scraped_part}\n\n"
         "Image Facts (Extracted directly from product photos/charts):\n"
         f"{facts_part}\n\n"
         "CRITICISM CRITERIA:\n"
         "1. ACCURACY: Check for hallucinations or approximations. If Image Facts specify exact dimensions (e.g. 'Height: 38cm'), does the Description use that exact number? If not, it is an issue. Did the Description invent sizes or facts that are not present in either source?\n"
-        "2. TITLE QUALITY: Is the title under 140 chars? Does it mention key attributes (materials, styling) from the facts?\n"
-        "3. TAG COMPLIANCE: Are there exactly 13 tags? Is any tag longer than 20 characters?\n"
+        "2. TITLE QUALITY: Is the title under 140 chars, preferably under 15 words, readable, and clear in the first 50-60 characters? Does it avoid pipe-separated keyword stuffing, repeated words, and subjective words like perfect or beautiful?\n"
+        "3. TAG COMPLIANCE: Are there exactly 13 unique multi-word tags where possible? Is every tag 20 characters or less? Do the tags cover product identity, traits, use cases, style/material, and long-tail phrases without repetition?\n"
+        "4. GOOGLE/PINTEREST SEO: Are Google and Pinterest titles/descriptions present, natural, and specific? Does image alt text accurately describe the product without keyword stuffing?\n"
         "\nOutput your response strictly as a JSON object matching the requested schema."
     )
 
@@ -591,26 +1073,37 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
     print(f" - Title issues: {verdict.get('title_issues', 'None')}")
     print(f" - Description issues: {verdict.get('description_issues', 'None')}")
     print(f" - Tag issues: {verdict.get('tag_issues', 'None')}")
+    if verdict.get("seo_issues"):
+        print(f" - SEO issues: {verdict.get('seo_issues')}")
 
     correction_prompt = (
         "You are an expert copywriter. Revise the following draft Etsy listing based on the critic feedback.\n"
         "Ensure all details are 100% accurate to the product specifications and images.\n"
-        "Make sure to preserve and use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications in the description so it is clean, structured, and highly readable.\n\n"
+        "Make sure to preserve and use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications in the description so it is clean, structured, and highly readable.\n"
+        "Keep the Etsy title clear and buyer-friendly, not keyword-stuffed. Generate all SEO metadata fields.\n\n"
         "Draft Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
         f"Category: {listing_data.get('category', '')}\n"
         f"Price: {listing_data.get('suggested_price', '')}\n"
         f"Tags: {', '.join(listing_data.get('tags', []))}\n"
+        f"Google Meta Title: {listing_data.get('google_meta_title', '')}\n"
+        f"Google Meta Description: {listing_data.get('google_meta_description', '')}\n"
+        f"Pinterest Title: {listing_data.get('pinterest_title', '')}\n"
+        f"Pinterest Description: {listing_data.get('pinterest_description', '')}\n"
+        f"Image Alt Text: {json.dumps(listing_data.get('image_alt_text', []))}\n"
         f"Description: {listing_data.get('description', '')}\n\n"
         "Critic Feedback:\n"
         f"1. Title issues: {verdict.get('title_issues', 'None')}\n"
         f"2. Description issues: {verdict.get('description_issues', 'None')}\n"
-        f"3. Tag issues: {verdict.get('tag_issues', 'None')}\n\n"
+        f"3. Tag issues: {verdict.get('tag_issues', 'None')}\n"
+        f"4. SEO issues: {verdict.get('seo_issues', 'None')}\n\n"
+        "SEO Strategy:\n"
+        f"{strategy_part}\n\n"
         "Image Facts (For Reference):\n"
         f"{facts_part}\n\n"
         "Original Scraped Info (For Reference):\n"
         f"{scraped_part}\n\n"
-        "Output your corrected listing strictly as a JSON object matching the EtsyListing schema with keys: 'title', 'description', 'tags' (list of strings), 'suggested_price', and 'category'."
+        "Output your corrected listing strictly as a JSON object matching the EtsyListing schema, including title, description, tags, suggested_price, category, seo_strategy, google_meta_title, google_meta_description, pinterest_title, pinterest_description, and image_alt_text."
     )
 
     corrected_data = listing_data
@@ -657,24 +1150,20 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
 
     print("Generating Etsy-optimized listing content...")
 
-    facts_str = ""
-    if image_facts:
-        facts_str = "\n".join([f"{k.upper()}: {v}" for k, v in image_facts.items() if v])
-    if not facts_str:
-        facts_str = "None extracted"
-
-    var_str = ""
-    if variation_specs:
-        var_str = "\n".join([
-            f"- {v.get('name')}: Size = {v.get('size') or 'N/A'}, Dimensions = {v.get('dimensions') or 'N/A'}"
-            for v in variation_specs if isinstance(v, dict)
-        ])
-    if not var_str:
-        var_str = "None extracted"
+    facts_str = _format_image_facts(image_facts)
+    var_str = _format_variation_specs(variation_specs)
+    seo_strategy = build_seo_strategy(
+        title=title,
+        description=description,
+        image_facts=image_facts,
+        variation_specs=variation_specs,
+        client=client,
+    )
+    seo_strategy_str = json.dumps(seo_strategy, indent=2)
 
     custom_rules = presets.get("custom_prompt_rules", "").strip()
     if custom_rules:
-        custom_rules_str = f"6. CUSTOM INSTRUCTIONS: {custom_rules}\n"
+        custom_rules_str = f"8. CUSTOM INSTRUCTIONS: {custom_rules}\n"
     else:
         custom_rules_str = ""
 
@@ -687,14 +1176,18 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         f"{facts_str}\n\n"
         "Variation Specifications (Extracted sizes/dimensions for specific options):\n"
         f"{var_str}\n\n"
+        "SEO Strategy (use this as the source of keyword priorities):\n"
+        f"{seo_strategy_str}\n\n"
         "Guidelines:\n"
-        "1. Write an SEO-friendly, catchy Title under 140 characters.\n"
-        "2. Write a detailed, structured Description focusing on value, features, and specs. Use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications to make the layout clean and highly readable. Do NOT output the description as a single dense paragraph.\n"
-        "3. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts'. If dimensions are unclear, missing, or empty, DO NOT mention dimensions at all. Do not invent or guess them.\n"
-        "4. Provide exactly 13 relevant search Tags (keywords or phrases). Each tag must be under 20 characters.\n"
-        "5. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n"
+        "1. Etsy title: clearly state the product noun and top objective traits upfront. Keep it under 140 characters and preferably under 15 words. The first 50-60 characters must be readable in Google/Etsy search. Do not use pipe-separated keyword stuffing.\n"
+        "2. Etsy title style: use commas or a colon only if helpful. Avoid repeated words, sale/shipping language, and subjective words like perfect, beautiful, amazing, or must-have.\n"
+        "3. Description: first sentence must clearly identify the product in natural shopper language. Then write a detailed, structured Description focusing on value, features, and specs. Use double newlines (\\n\\n) to separate sections, paragraphs, list items, and key specifications. Do NOT output the description as a single dense paragraph.\n"
+        "4. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts'. If dimensions are unclear, missing, or empty, DO NOT mention dimensions at all. Do not invent or guess them.\n"
+        "5. Etsy tags: provide exactly 13 unique relevant search tags. Each tag must be under 20 characters. Prefer multi-word phrases. Cover product identity, material/color/style, use case, audience/gift intent only if relevant, and long-tail niche phrases. Do not repeat the same root phrase across many tags.\n"
+        "6. Cross-platform SEO: also generate google_meta_title, google_meta_description, pinterest_title, pinterest_description, and 3-5 image_alt_text suggestions. Keep these natural and accurate to the product.\n"
+        "7. Suggest a retail price in USD (suggest a reasonable price if no price is provided).\n"
         f"{custom_rules_str}\n"
-        "Output your response strictly as a JSON object with keys: 'title', 'description', 'tags' (list of strings), 'suggested_price', and 'category'."
+        "Output your response strictly as a JSON object matching the EtsyListing schema."
     )
 
     listing_data = None
@@ -730,10 +1223,11 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
             return None
 
     # Run self-review critic and optional correction pass
-    listing_data = review_and_refine_listing(listing_data, description, image_facts, client=client)
+    listing_data["seo_strategy"] = listing_data.get("seo_strategy") or seo_strategy
+    listing_data = review_and_refine_listing(listing_data, description, image_facts, seo_strategy=seo_strategy, client=client)
 
-    # Apply strict tag guidelines
-    listing_data["tags"] = clean_tags(listing_data.get("tags", []), client)
+    # Apply strict tag and cross-platform SEO guidelines
+    listing_data = finalize_listing_seo(listing_data, seo_strategy, client)
     
     if not listing_data.get("category"):
         listing_data["category"] = "Not categorized"

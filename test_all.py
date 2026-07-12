@@ -72,16 +72,19 @@ class TestEtsyAutomationLogic(unittest.TestCase):
     def test_enriched_copywriting_and_self_review(self, mock_get_openai):
         """Test that write_etsy_listing properly formats prompts with image facts and reviews them."""
         mock_client = MagicMock()
+        mock_response_strategy = MagicMock()
         mock_response_listing = MagicMock()
         mock_response_review = MagicMock()
 
+        # Phase 1 mock SEO strategy
+        mock_response_strategy.text = '{"primary_product_noun": "test product", "top_traits": ["woven yarn"], "buyer_intents": ["everyday use"], "audience": [], "primary_keywords": ["test product", "woven yarn product"], "long_tail_keywords": ["woven yarn test product"], "tag_keywords": ["test product", "woven yarn", "everyday use"], "google_keywords": ["test product"], "pinterest_keywords": ["woven yarn product"]}'
         # Phase 2 mock draft listing
         mock_response_listing.text = '{"title": "Test Title", "description": "Test description of product", "tags": ["tag1", "tag2"], "suggested_price": "$15.99"}'
         # Phase 3 mock review verdict (approved)
         mock_response_review.text = '{"approved": true, "title_issues": "", "description_issues": "", "tag_issues": ""}'
 
-        # Return sequence for the two content generations
-        mock_client.models.generate_content.side_effect = [mock_response_listing, mock_response_review]
+        # Return sequence for SEO strategy, draft listing, and self-review critic
+        mock_client.models.generate_content.side_effect = [mock_response_strategy, mock_response_listing, mock_response_review]
 
         image_facts = {
             "dimensions": "Height: 38cm, Width: 28cm",
@@ -100,8 +103,12 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["title"], "Test Title")
         self.assertEqual(result["suggested_price"], "$15.99")
-        # Ensure client was called for both generating draft and self-review critic
-        self.assertEqual(mock_client.models.generate_content.call_count, 2)
+        self.assertEqual(len(result["tags"]), 13)
+        self.assertIn("google_meta_title", result)
+        self.assertIn("pinterest_description", result)
+        self.assertIn("seo_quality_score", result)
+        # Ensure client was called for SEO strategy, draft, and self-review critic
+        self.assertEqual(mock_client.models.generate_content.call_count, 3)
 
     @unittest.mock.patch("src.ai_helper.get_openai_client", return_value=None)
     def test_variation_spec_extraction(self, mock_get_openai):

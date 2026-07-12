@@ -111,7 +111,7 @@ DEFAULT_PRESETS = {
         "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Your task is to transform raw, clunky supplier specifications from AliExpress/manufacturers into a high-end, high-converting Etsy listing asset.\n"
         "--- CRITICAL COMPLIANCE RULES ---\n"
         "1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"bulk\", \"wholesale\", or \"shipping tracking variations\". Reframe everything around a \"curated, small-batch, premium boutique model\".\n"
-        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles. Use clean, natural keyphrases separated by pipes (|). Put primary structural/material identifiers in the first 40 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".\n"
+        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear, natural buyer-friendly title under 140 characters and preferably under 15 words. Put the product noun and primary structural/material identifiers in the first 50-60 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".\n"
         "3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. For all bulleted lists or technical attribute breakdowns, you must strictly use a literal hyphen (-) instead of bullet dots (•, *, or circle symbols). ABSOLUTELY NO MARKDOWN FORMATTING: Do not use asterisks (**) or underscores (_) to bold or italicize text, as Etsy does not support markdown. Use ALL CAPS for section headers instead. Ensure key traits like color, exact size, and materials appear clearly in the first two sentences.\n"
         "4. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the Title exactly match 2 or 3 of the Tags.\n"
         "5. META DESCRIPTION: Make the first paragraph of the description exactly 1-2 sentences (under 160 characters), naturally weaving in the primary keywords for Google SEO.\n"
@@ -128,6 +128,46 @@ def load_listing_presets() -> dict:
         except Exception:
             pass
     return dict(DEFAULT_PRESETS)
+
+def format_listing_txt(listing: dict) -> str:
+    """Build a readable listing export with optional cross-platform SEO fields."""
+    tags = listing.get("tags", []) or []
+    alt_text = listing.get("image_alt_text", []) or []
+    seo_notes = listing.get("seo_qa_notes", []) or []
+    strategy = listing.get("seo_strategy") or {}
+
+    sections = [
+        f"TITLE:\n{listing.get('title', '')}",
+        f"PRICE:\n{listing.get('suggested_price', '')}",
+        f"TAGS:\n{', '.join(tags)}",
+        f"DESCRIPTION:\n{listing.get('description', '')}",
+    ]
+
+    seo_sections = []
+    if listing.get("google_meta_title"):
+        seo_sections.append(f"GOOGLE META TITLE:\n{listing.get('google_meta_title', '')}")
+    if listing.get("google_meta_description"):
+        seo_sections.append(f"GOOGLE META DESCRIPTION:\n{listing.get('google_meta_description', '')}")
+    if listing.get("pinterest_title"):
+        seo_sections.append(f"PINTEREST TITLE:\n{listing.get('pinterest_title', '')}")
+    if listing.get("pinterest_description"):
+        seo_sections.append(f"PINTEREST DESCRIPTION:\n{listing.get('pinterest_description', '')}")
+    if alt_text:
+        seo_sections.append("IMAGE ALT TEXT:\n" + "\n".join(f"- {item}" for item in alt_text))
+    if listing.get("seo_quality_score") is not None:
+        seo_sections.append(f"SEO QUALITY SCORE:\n{listing.get('seo_quality_score')}")
+    if seo_notes:
+        seo_sections.append("SEO QA NOTES:\n" + "\n".join(f"- {item}" for item in seo_notes))
+    if strategy:
+        seo_sections.append(
+            "SEO STRATEGY:\n"
+            + json.dumps(strategy, indent=2, ensure_ascii=False)
+        )
+
+    if seo_sections:
+        sections.append("CROSS-PLATFORM SEO:\n" + "\n\n".join(seo_sections))
+
+    return "\n\n".join(sections)
 
 @app.get("/api/listing-presets")
 def get_listing_presets():
@@ -1028,12 +1068,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         # Write human-readable listing.txt alongside metadata.json
         try:
             listing_txt_path = os.path.join(product_dir, "listing.txt")
-            listing_txt_content = (
-                f"TITLE:\n{etsy_listing.get('title', '')}\n\n"
-                f"PRICE:\n{etsy_listing.get('suggested_price', '')}\n\n"
-                f"TAGS:\n{', '.join(etsy_listing.get('tags', []))}\n\n"
-                f"DESCRIPTION:\n{etsy_listing.get('description', '')}"
-            )
+            listing_txt_content = format_listing_txt(etsy_listing)
             with open(listing_txt_path, "w", encoding="utf-8") as f:
                 f.write(listing_txt_content)
         except Exception as txt_err:
@@ -1130,12 +1165,7 @@ def save_listing(req: ListingSaveRequest):
         # Also update human-readable listing.txt
         try:
             listing_txt_path = os.path.join(product_dir, "listing.txt")
-            listing_txt_content = (
-                f"TITLE:\n{req.title}\n\n"
-                f"PRICE:\n{req.suggested_price}\n\n"
-                f"TAGS:\n{', '.join(req.tags)}\n\n"
-                f"DESCRIPTION:\n{req.description}"
-            )
+            listing_txt_content = format_listing_txt(metadata["etsy_listing"])
             with open(listing_txt_path, "w", encoding="utf-8") as f:
                 f.write(listing_txt_content)
         except Exception as txt_err:

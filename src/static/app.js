@@ -266,6 +266,15 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (btnResetRules) {
+        btnResetRules.addEventListener("click", () => {
+            presetCustomPromptRules.value = presetCustomPromptRules.value.replace(
+                "2. TITLE RESTRICTIONS: Do not keyword-stuff titles. Use clean, natural keyphrases separated by pipes (|). Put primary structural/material identifiers in the first 40 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".",
+                "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear, natural buyer-friendly title under 140 characters and preferably under 15 words. Put the product noun and primary structural/material identifiers in the first 50-60 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\"."
+            );
+        });
+    }
+
     btnSavePresets.addEventListener("click", () => {
         const payload = {
             shop_intro: presetShopIntro.value.trim(),
@@ -1265,6 +1274,100 @@ document.addEventListener("DOMContentLoaded", () => {
         return panel;
     }
 
+    function asTextList(value) {
+        if (Array.isArray(value)) {
+            return value.map(item => String(item || "").trim()).filter(Boolean);
+        }
+        if (typeof value === "string") {
+            return value.split(/\n|,/).map(item => item.trim()).filter(Boolean);
+        }
+        return [];
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function getSeoCopyText(listing, copyType) {
+        const altText = asTextList(listing.image_alt_text);
+        const notes = asTextList(listing.seo_qa_notes);
+        if (copyType === "google-title") return listing.google_meta_title || "";
+        if (copyType === "google-desc") return listing.google_meta_description || "";
+        if (copyType === "pinterest-title") return listing.pinterest_title || "";
+        if (copyType === "pinterest-desc") return listing.pinterest_description || "";
+        if (copyType === "alt-text") return altText.join("\n");
+        if (copyType === "seo-notes") return notes.join("\n");
+        return "";
+    }
+
+    function buildSeoPreviewHtml(listing) {
+        const altText = asTextList(listing.image_alt_text);
+        const notes = asTextList(listing.seo_qa_notes);
+        const score = Number.isFinite(Number(listing.seo_quality_score))
+            ? Number(listing.seo_quality_score)
+            : null;
+
+        const fields = [
+            { label: "Google Title", copyType: "google-title", value: listing.google_meta_title || "" },
+            { label: "Google Description", copyType: "google-desc", value: listing.google_meta_description || "" },
+            { label: "Pinterest Title", copyType: "pinterest-title", value: listing.pinterest_title || "" },
+            { label: "Pinterest Description", copyType: "pinterest-desc", value: listing.pinterest_description || "" },
+            { label: "Image Alt Text", copyType: "alt-text", value: altText.join("\n") }
+        ].filter(field => field.value);
+
+        if (!fields.length && score === null && !notes.length) {
+            return "";
+        }
+
+        const scoreHtml = score === null
+            ? ""
+            : `<span class="seo-score-pill">SEO ${score}/100</span>`;
+
+        const cardsHtml = fields.map(field => `
+            <div class="preview-seo-card">
+                <div class="preview-field-header">
+                    <span class="preview-label">${escapeHtml(field.label)}</span>
+                    <button class="copy-btn" data-copy-type="${field.copyType}">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <span>Copy</span>
+                    </button>
+                </div>
+                <div class="preview-seo-value">${escapeHtml(field.value)}</div>
+            </div>
+        `).join("");
+
+        const notesHtml = notes.length
+            ? `<div class="preview-seo-notes">
+                <div class="preview-field-header">
+                    <span class="preview-label">SEO QA Notes</span>
+                    <button class="copy-btn" data-copy-type="seo-notes">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <span>Copy</span>
+                    </button>
+                </div>
+                <ul class="preview-seo-list">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>
+            </div>`
+            : "";
+
+        return `
+            <div class="preview-field preview-seo-field">
+                <div class="preview-field-header">
+                    <span class="preview-label">Cross-Platform SEO</span>
+                    ${scoreHtml}
+                </div>
+                <div class="preview-seo-grid">
+                    ${cardsHtml}
+                    ${notesHtml}
+                </div>
+            </div>
+        `;
+    }
+
     function buildListingPreviewPanel(item) {
         const listing = item.etsy_listing || {};
         const panel = document.createElement("div");
@@ -1276,6 +1379,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const tagsHtml = tags.length > 0
             ? `<div class="preview-tags">${tags.map(t => `<span class="preview-tag">${t}</span>`).join("")}</div>`
             : `<span class="preview-value" style="color:var(--neutral-grey)">—</span>`;
+
+        const seoHtml = buildSeoPreviewHtml(listing);
 
         panel.innerHTML = `
             <div class="preview-grid-top">
@@ -1345,6 +1450,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
                 <textarea class="preview-desc" readonly>${listing.description || "—"}</textarea>
             </div>
+            ${seoHtml}
         `;
 
         renderPreviewGeneratedImages(
@@ -1371,6 +1477,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     textToCopy = (listing.tags || []).join(", ");
                 } else if (copyType === "desc") {
                     textToCopy = listing.description || "";
+                } else {
+                    textToCopy = getSeoCopyText(listing, copyType);
                 }
                 
                 navigator.clipboard.writeText(textToCopy).then(() => {
