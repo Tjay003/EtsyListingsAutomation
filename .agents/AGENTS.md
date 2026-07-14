@@ -13,6 +13,7 @@ This project is an automated Etsy listing tool. It allows users to scrape produc
 - **`themes.yaml`**: Preconfigured styling presets (e.g. `bauhaus_beige`, `cottagecore_rustic`) for image generation.
 - **`test_all.py`**: Local unit testing suite containing logical checks.
 - **`outputs/`** (Default): Stores scraped product directories, metadata, downloaded images, and generated assets.
+- **`docs/listing_production_studio_storage_plan.md`**: Future deployment/storage plan for treating this as a listing production studio using Railway plus Supabase.
 
 ---
 

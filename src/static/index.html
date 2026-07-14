@@ -61,6 +61,8 @@
             <div id="console-logs" class="console-logs"></div>
         </aside>
 
+        <div id="notification-stack" class="notification-stack" aria-live="polite" aria-atomic="false"></div>
+
         <!-- MAIN LAYOUT -->
         <main class="app-main" id="app-main">
             
@@ -119,6 +121,17 @@
                                 <option value="listing_with_images">Listing Copy + AI Images</option>
                                 <option value="images_only">AI Images Only</option>
                             </select>
+                        </div>
+
+                        <div class="input-group" id="copywriting-depth-group">
+                            <label class="field-label" for="copywriting-depth-select">Copywriting Depth</label>
+                            <select id="copywriting-depth-select" class="select-input">
+                                <option value="fast">Fast Batch</option>
+                                <option value="balanced">Balanced</option>
+                                <option value="quality" selected>Quality Review</option>
+                                <option value="deep">Deep Scan</option>
+                            </select>
+                            <p class="field-hint" id="copywriting-depth-hint">Quality Review uses modest scans plus stricter QA. It allows natural storytelling but avoids unsupported product details.</p>
                         </div>
 
                         <div id="reference-picker-container" class="reference-picker-container">
@@ -326,6 +339,6 @@
             </div>
         </div>
     </div>
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=18-rules"></script>
 </body>
 </html>

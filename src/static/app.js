@@ -16,6 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnClearConsole = document.getElementById("btn-clear-console");
     const consoleActivityDot = document.getElementById("console-activity-dot");
     const appMain = document.getElementById("app-main");
+    const notificationStack = document.getElementById("notification-stack");
 
     // Filter pills
     const filterPills = document.querySelectorAll(".filter-pill");
@@ -25,6 +26,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const wsProductTitle = document.getElementById("ws-product-title");
     const wsProductSlug = document.getElementById("ws-product-slug");
     const wsPipelineMode = document.getElementById("ws-pipeline-mode");
+    const copywritingDepthSelect = document.getElementById("copywriting-depth-select");
+    const copywritingDepthHint = document.getElementById("copywriting-depth-hint");
     const imageGenConfigContainer = document.getElementById("image-gen-config-container");
     const imageModelSelect = document.getElementById("image-model-select");
     const imageThinkingSelect = document.getElementById("image-thinking-select");
@@ -63,6 +66,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnResetRules = document.getElementById("btn-reset-rules");
     const btnSavePresets = document.getElementById("btn-save-presets");
     const presetsStatus = document.getElementById("presets-status");
+    const defaultCopywritingRules = [
+        "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Transform raw supplier/manufacturer details into a polished, readable, high-converting Etsy listing while staying factually conservative.",
+        "--- COPYWRITING AND COMPLIANCE RULES ---",
+        "1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"wholesale\", \"dropshipping\", \"shipping tracking variations\", \"bulk order\", \"bulk pricing\", or \"bulk sale\". Do not claim small-batch, handmade, luxury, designer, eco-friendly, or premium materials unless directly supported by the source facts. Use a curated boutique tone without inventing business-model claims.",
+        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear Etsy-ready buyer-friendly title under 140 characters, ideally 80-125 characters when enough supported details exist. Put the product noun and strongest objective identifiers in the first 50-60 characters.",
+        "3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. Use plain Etsy-safe text only: no markdown bold/italic, no asterisks for emphasis, and no underscores. For list items or attribute breakdowns, use a literal hyphen (-). Section headers may use ALL CAPS or clear title case, but keep them consistent.",
+        "4. FACT SAFETY: Mention color, exact size, materials, capacity, closures, pockets, compatibility, gift audience, and care details only when supported by source text, image facts, or variation specs. If a detail is unknown, leave it out instead of guessing.",
+        "5. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the title exactly match 2 or 3 of the tags when possible, while keeping tags under 20 characters.",
+        "6. OCCASION TARGETING: If clearly applicable, include 1 or 2 gift/use-intent tags such as \"gift for her\" or \"travel bag\", but do not force audience or occasion claims onto unrelated products."
+    ].join("\n");
     const workspaceTokenValue = document.getElementById("workspace-token-value");
     const btnSwitchWorkspace = document.getElementById("btn-switch-workspace");
 
@@ -74,6 +87,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let isBulkRunning = false;
     let pipelineRunning = false;
     let userToken = localStorage.getItem("userToken") || "";
+    let browserNotificationRequested = false;
 
     const modal = document.getElementById("app-modal");
     const modalTitle = document.getElementById("modal-title");
@@ -175,6 +189,75 @@ document.addEventListener("DOMContentLoaded", () => {
             confirmText: "OK",
             hideCancel: true
         });
+    }
+
+    function showAppNotification({ title, message, type = "info", timeout = 7000 }) {
+        if (!notificationStack) return;
+
+        const item = document.createElement("div");
+        item.className = `app-notification notification-${type}`;
+        item.setAttribute("role", type === "error" ? "alert" : "status");
+
+        const content = document.createElement("div");
+        content.className = "notification-content";
+
+        const titleEl = document.createElement("strong");
+        titleEl.className = "notification-title";
+        titleEl.textContent = title || "Notification";
+
+        const messageEl = document.createElement("p");
+        messageEl.className = "notification-message";
+        messageEl.textContent = message || "";
+
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "notification-close";
+        closeBtn.setAttribute("aria-label", "Dismiss notification");
+        closeBtn.textContent = "X";
+
+        const dismiss = () => {
+            item.classList.add("leaving");
+            setTimeout(() => item.remove(), 180);
+        };
+
+        closeBtn.addEventListener("click", dismiss);
+        content.appendChild(titleEl);
+        content.appendChild(messageEl);
+        item.appendChild(content);
+        item.appendChild(closeBtn);
+        notificationStack.appendChild(item);
+
+        if (timeout > 0) {
+            setTimeout(dismiss, timeout);
+        }
+    }
+
+    async function requestBrowserNotificationPermission() {
+        if (!("Notification" in window) || browserNotificationRequested) return;
+        browserNotificationRequested = true;
+        if (Notification.permission === "default") {
+            try {
+                await Notification.requestPermission();
+            } catch (_) {}
+        }
+    }
+
+    function showBrowserNotification(title, message, type = "info") {
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        try {
+            new Notification(title || "Pipeline update", {
+                body: message || "",
+                tag: `etsy-pipeline-${type}-${Date.now()}`,
+                silent: false
+            });
+        } catch (_) {}
+    }
+
+    function notifyPipeline({ title, message, type = "info", browser = true }) {
+        showAppNotification({ title, message, type });
+        if (browser) {
+            showBrowserNotification(title, message, type);
+        }
     }
 
     function sanitizeWorkspaceToken(value) {
@@ -375,16 +458,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     if (btnResetRules) {
         btnResetRules.addEventListener("click", () => {
-            presetCustomPromptRules.value = "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Your task is to transform raw, clunky supplier specifications from AliExpress/manufacturers into a high-end, high-converting Etsy listing asset.\n--- CRITICAL COMPLIANCE RULES ---\n1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"bulk\", \"wholesale\", or \"shipping tracking variations\". Reframe everything around a \"curated, small-batch, premium boutique model\".\n2. TITLE RESTRICTIONS: Do not keyword-stuff titles. Use clean, natural keyphrases separated by pipes (|). Put primary structural/material identifiers in the first 40 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".\n3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. For all bulleted lists or technical attribute breakdowns, you must strictly use a literal hyphen (-) instead of bullet dots (•, *, or circle symbols). ABSOLUTELY NO MARKDOWN FORMATTING: Do not use asterisks (**) or underscores (_) to bold or italicize text, as Etsy does not support markdown. Use ALL CAPS for section headers instead. Ensure key traits like color, exact size, and materials appear clearly in the first two sentences.\n4. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the Title exactly match 2 or 3 of the Tags.\n5. META DESCRIPTION: Make the first paragraph of the description exactly 1-2 sentences (under 160 characters), naturally weaving in the primary keywords for Google SEO.\n6. OCCASION TARGETING: If applicable, weave in 1 or 2 tags targeting gift intent (e.g., \"Gifts for Her\", \"Anniversary Gift\").";
-        });
-    }
-
-    if (btnResetRules) {
-        btnResetRules.addEventListener("click", () => {
-            presetCustomPromptRules.value = presetCustomPromptRules.value.replace(
-                "2. TITLE RESTRICTIONS: Do not keyword-stuff titles. Use clean, natural keyphrases separated by pipes (|). Put primary structural/material identifiers in the first 40 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".",
-                "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear, natural buyer-friendly title under 140 characters and preferably under 15 words. Put the product noun and primary structural/material identifiers in the first 50-60 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\"."
-            );
+            presetCustomPromptRules.value = defaultCopywritingRules;
         });
     }
 
@@ -474,6 +548,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return {
             model_key: modelKey,
             thinking_level: supportsModelThinking(modelKey) ? thinkingLevel : "off"
+        };
+    }
+
+    function getCopywritingOptions() {
+        return {
+            depth: copywritingDepthSelect ? copywritingDepthSelect.value : "quality"
         };
     }
 
@@ -710,6 +790,21 @@ document.addEventListener("DOMContentLoaded", () => {
         if (imageGenConfigContainer) {
             imageGenConfigContainer.classList.toggle("is-visible", isImagePipelineMode());
         }
+        if (copywritingDepthSelect) {
+            copywritingDepthSelect.disabled = wsPipelineMode.value === "images_only";
+        }
+        syncCopywritingDepthHint();
+    }
+
+    function syncCopywritingDepthHint() {
+        if (!copywritingDepthHint || !copywritingDepthSelect) return;
+        const hints = {
+            fast: "Fast Batch is text-first and uses the fewest image/spec scans. Best for rough bulk drafts.",
+            balanced: "Balanced keeps quality high while capping expensive variation scans.",
+            quality: "Quality Review uses modest scans plus stricter QA. It allows natural storytelling but avoids unsupported product details.",
+            deep: "Deep Scan is slowest and uses the richest visual/variation analysis for important listings."
+        };
+        copywritingDepthHint.textContent = hints[copywritingDepthSelect.value] || hints.quality;
     }
 
     function isImagePipelineMode() {
@@ -717,6 +812,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     wsPipelineMode.addEventListener("change", syncPipelineModeUI);
+    if (copywritingDepthSelect) {
+        copywritingDepthSelect.addEventListener("change", syncCopywritingDepthHint);
+    }
     syncPipelineModeUI();
 
     function syncTaskPromptModeUI(row) {
@@ -1149,19 +1247,33 @@ document.addEventListener("DOMContentLoaded", () => {
         return imageEntry;
     }
 
+    function getGeneratedSourceLabel(imageEntry) {
+        if (!imageEntry || typeof imageEntry !== "object") return "";
+        const sourceLabel = imageEntry.source_label || "";
+        const sourceFolder = imageEntry.source_folder || "";
+        const sourceIndex = Number.isFinite(Number(imageEntry.source_index))
+            ? Number(imageEntry.source_index) + 1
+            : "";
+        if (sourceLabel) return `From ${sourceLabel}`;
+        if (sourceFolder && sourceIndex) return `From ${sourceFolder.replace("_", " ")} ${sourceIndex}`;
+        if (imageEntry.source_image) return `From ${imageEntry.source_image}`;
+        return "";
+    }
+
     function renderPreviewGeneratedImages(container, images, slug) {
         container.innerHTML = "";
 
-        const generatedImages = (Array.isArray(images) ? images : [])
-            .map(getImagePath)
-            .filter(Boolean);
+        const generatedEntries = (Array.isArray(images) ? images : [])
+            .map(entry => ({ entry, imagePath: getImagePath(entry) }))
+            .filter(item => item.imagePath);
 
-        if (generatedImages.length === 0) {
+        if (generatedEntries.length === 0) {
             container.innerHTML = `<div class="preview-generated-empty">No generated images yet.</div>`;
             return;
         }
 
-        generatedImages.forEach((imagePath, index) => {
+        generatedEntries.forEach(({ entry, imagePath }, index) => {
+            const sourceLabel = getGeneratedSourceLabel(entry);
             const src = getProductImageSrc(slug, imagePath, true);
             const link = document.createElement("a");
             link.className = "preview-generated-tile";
@@ -1181,6 +1293,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
             link.appendChild(img);
             link.appendChild(badge);
+            if (sourceLabel) {
+                const source = document.createElement("span");
+                source.className = "preview-generated-source";
+                source.textContent = sourceLabel;
+                link.appendChild(source);
+            }
             container.appendChild(link);
         });
     }
@@ -1408,81 +1526,6 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/'/g, "&#039;");
     }
 
-    function getSeoCopyText(listing, copyType) {
-        const altText = asTextList(listing.image_alt_text);
-        const notes = asTextList(listing.seo_qa_notes);
-        if (copyType === "google-title") return listing.google_meta_title || "";
-        if (copyType === "google-desc") return listing.google_meta_description || "";
-        if (copyType === "pinterest-title") return listing.pinterest_title || "";
-        if (copyType === "pinterest-desc") return listing.pinterest_description || "";
-        if (copyType === "alt-text") return altText.join("\n");
-        if (copyType === "seo-notes") return notes.join("\n");
-        return "";
-    }
-
-    function buildSeoPreviewHtml(listing) {
-        const altText = asTextList(listing.image_alt_text);
-        const notes = asTextList(listing.seo_qa_notes);
-        const score = Number.isFinite(Number(listing.seo_quality_score))
-            ? Number(listing.seo_quality_score)
-            : null;
-
-        const fields = [
-            { label: "Google Title", copyType: "google-title", value: listing.google_meta_title || "" },
-            { label: "Google Description", copyType: "google-desc", value: listing.google_meta_description || "" },
-            { label: "Pinterest Title", copyType: "pinterest-title", value: listing.pinterest_title || "" },
-            { label: "Pinterest Description", copyType: "pinterest-desc", value: listing.pinterest_description || "" },
-            { label: "Image Alt Text", copyType: "alt-text", value: altText.join("\n") }
-        ].filter(field => field.value);
-
-        if (!fields.length && score === null && !notes.length) {
-            return "";
-        }
-
-        const scoreHtml = score === null
-            ? ""
-            : `<span class="seo-score-pill">SEO ${score}/100</span>`;
-
-        const cardsHtml = fields.map(field => `
-            <div class="preview-seo-card">
-                <div class="preview-field-header">
-                    <span class="preview-label">${escapeHtml(field.label)}</span>
-                    <button class="copy-btn" data-copy-type="${field.copyType}">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        <span>Copy</span>
-                    </button>
-                </div>
-                <div class="preview-seo-value">${escapeHtml(field.value)}</div>
-            </div>
-        `).join("");
-
-        const notesHtml = notes.length
-            ? `<div class="preview-seo-notes">
-                <div class="preview-field-header">
-                    <span class="preview-label">SEO QA Notes</span>
-                    <button class="copy-btn" data-copy-type="seo-notes">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        <span>Copy</span>
-                    </button>
-                </div>
-                <ul class="preview-seo-list">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>
-            </div>`
-            : "";
-
-        return `
-            <div class="preview-field preview-seo-field">
-                <div class="preview-field-header">
-                    <span class="preview-label">Cross-Platform SEO</span>
-                    ${scoreHtml}
-                </div>
-                <div class="preview-seo-grid">
-                    ${cardsHtml}
-                    ${notesHtml}
-                </div>
-            </div>
-        `;
-    }
-
     function buildListingPreviewPanel(item) {
         const listing = item.etsy_listing || {};
         const panel = document.createElement("div");
@@ -1494,8 +1537,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const tagsHtml = tags.length > 0
             ? `<div class="preview-tags">${tags.map(t => `<span class="preview-tag">${t}</span>`).join("")}</div>`
             : `<span class="preview-value" style="color:var(--neutral-grey)">—</span>`;
-
-        const seoHtml = buildSeoPreviewHtml(listing);
 
         panel.innerHTML = `
             <div class="preview-grid-top">
@@ -1565,7 +1606,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
                 <textarea class="preview-desc" readonly>${listing.description || "—"}</textarea>
             </div>
-            ${seoHtml}
         `;
 
         renderPreviewGeneratedImages(
@@ -1592,8 +1632,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     textToCopy = (listing.tags || []).join(", ");
                 } else if (copyType === "desc") {
                     textToCopy = listing.description || "";
-                } else {
-                    textToCopy = getSeoCopyText(listing, copyType);
                 }
                 
                 navigator.clipboard.writeText(textToCopy).then(() => {
@@ -1673,6 +1711,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .filter(c => c.dataset.status === "queued" || c.dataset.status === "done");
 
         if (checked.length === 0) return;
+        requestBrowserNotificationPermission();
 
         isBulkRunning = true;
         btnRunSelected.disabled = true;
@@ -1694,17 +1733,29 @@ document.addEventListener("DOMContentLoaded", () => {
                         product_slug: slug,
                         mode: wsPipelineMode.value,
                         image_tasks: isImagePipelineMode() ? getImageTasks() : [],
-                        image_settings: getImageSettings()
+                        image_settings: getImageSettings(),
+                        copywriting_options: getCopywritingOptions()
                     })
                 });
                 // Wait for the SSE "done" or "error" event for this slug before continuing
                 await waitForPipelineCompletion(slug);
             } catch (err) {
                 logConsole("error", `Bulk run error on ${slug}: ${err.message}`);
+                notifyPipeline({
+                    title: "Bulk Run Paused",
+                    message: err.message,
+                    type: "error"
+                });
+                break;
             }
         }
 
         logConsole("success", `Bulk run complete. Processed ${checked.length} listing(s).`);
+        notifyPipeline({
+            title: "Bulk Run Finished",
+            message: `Processed ${checked.length} listing(s).`,
+            type: "success"
+        });
         isBulkRunning = false;
         btnRunSelected.textContent = "Run Listings";
         loadQueue();
@@ -1712,18 +1763,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /**
      * Returns a Promise that resolves when the SSE stream emits a "done" or "error"
-     * event. Uses a poll + timeout approach to avoid blocking the SSE listener.
-     * Resolves after max 5 minutes per item (safety net).
+     * event. Uses polling so bulk runs stay strictly sequential.
+     * Rejects after max 45 minutes per item as a safety net instead of starting overlap.
      */
     function waitForPipelineCompletion(slug) {
-        return new Promise(resolve => {
-            const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max
+        return new Promise((resolve, reject) => {
+            const TIMEOUT_MS = 45 * 60 * 1000;
             let resolved = false;
 
             const timer = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
-                    resolve();
+                    clearInterval(poll);
+                    reject(new Error(`Timed out waiting for ${slug} after 45 minutes.`));
                 }
             }, TIMEOUT_MS);
 
@@ -1738,7 +1790,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         clearTimeout(timer);
                         if (!resolved) {
                             resolved = true;
-                            resolve();
+                            if (item.status === "failed") {
+                                reject(new Error(item.error || `${slug} failed.`));
+                            } else {
+                                resolve();
+                            }
                         }
                     }
                 } catch (_) {}
@@ -1796,6 +1852,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnGenerate.addEventListener("click", () => {
         const slug = wsProductSlug.value;
         if (!slug) return;
+        requestBrowserNotificationPermission();
 
         logConsole("system", `Triggering pipeline for ${slug}...`);
         btnGenerate.disabled = true;
@@ -1807,7 +1864,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 product_slug: slug,
                 mode: wsPipelineMode.value,
                 image_tasks: isImagePipelineMode() ? getImageTasks() : [],
-                image_settings: getImageSettings()
+                image_settings: getImageSettings(),
+                copywriting_options: getCopywritingOptions()
             })
         });
     });
@@ -1826,10 +1884,20 @@ document.addEventListener("DOMContentLoaded", () => {
                 setActivityDot(true);
             } else if (data.status === "error") {
                 logConsole("error", data.message);
+                notifyPipeline({
+                    title: data.title || "Pipeline Failed",
+                    message: data.message || "A pipeline task failed.",
+                    type: "error"
+                });
                 btnGenerate.disabled = false;
                 setActivityDot(false);
             } else if (data.status === "done") {
                 logConsole("success", data.message);
+                notifyPipeline({
+                    title: data.title || "Pipeline Finished",
+                    message: data.message || "A pipeline task finished.",
+                    type: "success"
+                });
                 btnGenerate.disabled = false;
                 setActivityDot(false);
 
@@ -1849,6 +1917,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (data.generated_images) {
                     renderGeneratedImages(data.generated_images, data.output_dir_name);
                 }
+            } else if (data.status === "notification") {
+                notifyPipeline({
+                    title: data.title || "Pipeline Update",
+                    message: data.message || "",
+                    type: data.level || "info",
+                    browser: data.browser !== false
+                });
             } else if (data.status === "queue_updated") {
                 loadQueue();
             }
@@ -1954,6 +2029,7 @@ document.addEventListener("DOMContentLoaded", () => {
         images.forEach((imgFile) => {
             const imagePath = getImagePath(imgFile);
             if (!imagePath) return;
+            const sourceLabel = getGeneratedSourceLabel(imgFile);
 
             const card = document.createElement("div");
             card.className = "prompt-card";
@@ -1966,6 +2042,16 @@ document.addEventListener("DOMContentLoaded", () => {
             
             imgWrap.appendChild(img);
             card.appendChild(imgWrap);
+
+            if (sourceLabel) {
+                const content = document.createElement("div");
+                content.className = "prompt-card-content";
+                const label = document.createElement("div");
+                label.className = "generated-source-label";
+                label.textContent = sourceLabel;
+                content.appendChild(label);
+                card.appendChild(content);
+            }
             imagesGrid.appendChild(card);
         });
     }

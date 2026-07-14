@@ -2,12 +2,14 @@ import os
 import sys
 import json
 import asyncio
+import logging
 import re
 import shutil
 import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +39,41 @@ from src.image_gen import (
 # Load env variables initially
 env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
 load_dotenv(dotenv_path=env_path)
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+pipeline_logger = logging.getLogger("etsy_pipeline")
+pipeline_logger.setLevel(logging.INFO)
+pipeline_logger.propagate = False
+
+if not pipeline_logger.handlers:
+    log_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "pipeline.log"),
+        maxBytes=2_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    pipeline_logger.addHandler(log_handler)
+
+def summarize_stream_event(data: dict) -> dict:
+    if not isinstance(data, dict):
+        return {"event": str(data)}
+
+    summary = {
+        "status": data.get("status"),
+        "title": data.get("title"),
+        "message": data.get("message"),
+        "slug": data.get("slug") or data.get("output_dir_name"),
+    }
+    if "generated_images" in data:
+        generated_images = data.get("generated_images") or []
+        summary["generated_images"] = len(generated_images) if isinstance(generated_images, list) else "present"
+    if "listing" in data:
+        summary["listing"] = "present" if data.get("listing") else "empty"
+    return {key: value for key, value in summary.items() if value not in (None, "")}
 
 def sanitize_user_token(token: str | None = None) -> str:
     sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", token or "")[:64]
@@ -127,7 +164,16 @@ class ProgressStreamer:
             del self.listeners[token]
 
     def publish(self, data, user_token: str = "default"):
-        for queue in list(self.listeners.get(sanitize_user_token(user_token), [])):
+        token = sanitize_user_token(user_token)
+        try:
+            pipeline_logger.info(
+                "[%s] %s",
+                token,
+                json.dumps(summarize_stream_event(data), ensure_ascii=False),
+            )
+        except Exception:
+            pass
+        for queue in list(self.listeners.get(token, [])):
             queue.put_nowait(data)
 
 streamer = ProgressStreamer()
@@ -167,15 +213,25 @@ DEFAULT_PRESETS = {
     "materials_disclaimer": "",
     "custom_prompt_rules": (
         "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Your task is to transform raw, clunky supplier specifications from AliExpress/manufacturers into a high-end, high-converting Etsy listing asset.\n"
-        "--- CRITICAL COMPLIANCE RULES ---\n"
+        "--- COPYWRITING AND COMPLIANCE RULES ---\n"
         "1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"bulk\", \"wholesale\", or \"shipping tracking variations\". Reframe everything around a \"curated, small-batch, premium boutique model\".\n"
-        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear, natural buyer-friendly title under 140 characters and preferably under 15 words. Put the product noun and primary structural/material identifiers in the first 50-60 characters. Remove subjective words like \"perfect\", \"beautiful\", or \"unbelievable\".\n"
+        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear Etsy-ready buyer-friendly title under 140 characters, ideally 80-125 characters when enough supported details exist. Put the product noun and strongest objective identifiers in the first 50-60 characters.\n"
         "3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. For all bulleted lists or technical attribute breakdowns, you must strictly use a literal hyphen (-) instead of bullet dots (•, *, or circle symbols). ABSOLUTELY NO MARKDOWN FORMATTING: Do not use asterisks (**) or underscores (_) to bold or italicize text, as Etsy does not support markdown. Use ALL CAPS for section headers instead. Ensure key traits like color, exact size, and materials appear clearly in the first two sentences.\n"
         "4. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the Title exactly match 2 or 3 of the Tags.\n"
-        "5. META DESCRIPTION: Make the first paragraph of the description exactly 1-2 sentences (under 160 characters), naturally weaving in the primary keywords for Google SEO.\n"
-        "6. OCCASION TARGETING: If applicable, weave in 1 or 2 tags targeting gift intent (e.g., \"Gifts for Her\", \"Anniversary Gift\")."
+        "5. OCCASION TARGETING: If applicable, weave in 1 or 2 tags targeting gift intent (e.g., \"Gifts for Her\", \"Anniversary Gift\")."
     )
 }
+
+DEFAULT_PRESETS["custom_prompt_rules"] = (
+    "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Transform raw supplier/manufacturer details into a polished, readable, high-converting Etsy listing while staying factually conservative.\n"
+    "--- COPYWRITING AND COMPLIANCE RULES ---\n"
+    "1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"wholesale\", \"dropshipping\", \"shipping tracking variations\", \"bulk order\", \"bulk pricing\", or \"bulk sale\". Do not claim small-batch, handmade, luxury, designer, eco-friendly, or premium materials unless directly supported by the source facts. Use a curated boutique tone without inventing business-model claims.\n"
+    "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear Etsy-ready buyer-friendly title under 140 characters, ideally 80-125 characters when enough supported details exist. Put the product noun and strongest objective identifiers in the first 50-60 characters.\n"
+    "3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. Use plain Etsy-safe text only: no markdown bold/italic, no asterisks for emphasis, and no underscores. For list items or attribute breakdowns, use a literal hyphen (-). Section headers may use ALL CAPS or clear title case, but keep them consistent.\n"
+    "4. FACT SAFETY: Mention color, exact size, materials, capacity, closures, pockets, compatibility, gift audience, and care details only when supported by source text, image facts, or variation specs. If a detail is unknown, leave it out instead of guessing.\n"
+    "5. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the title exactly match 2 or 3 of the tags when possible, while keeping tags under 20 characters.\n"
+    "6. OCCASION TARGETING: If clearly applicable, include 1 or 2 gift/use-intent tags such as \"gift for her\" or \"travel bag\", but do not force audience or occasion claims onto unrelated products."
+)
 
 def load_listing_presets() -> dict:
     """Load listing presets from file, returning defaults if file does not exist."""
@@ -188,42 +244,16 @@ def load_listing_presets() -> dict:
     return dict(DEFAULT_PRESETS)
 
 def format_listing_txt(listing: dict) -> str:
-    """Build a readable listing export with optional cross-platform SEO fields."""
+    """Build a readable Etsy copywriting export."""
     tags = listing.get("tags", []) or []
-    alt_text = listing.get("image_alt_text", []) or []
-    seo_notes = listing.get("seo_qa_notes", []) or []
-    strategy = listing.get("seo_strategy") or {}
 
     sections = [
         f"TITLE:\n{listing.get('title', '')}",
+        f"CATEGORY:\n{listing.get('category', '')}",
         f"PRICE:\n{listing.get('suggested_price', '')}",
         f"TAGS:\n{', '.join(tags)}",
         f"DESCRIPTION:\n{listing.get('description', '')}",
     ]
-
-    seo_sections = []
-    if listing.get("google_meta_title"):
-        seo_sections.append(f"GOOGLE META TITLE:\n{listing.get('google_meta_title', '')}")
-    if listing.get("google_meta_description"):
-        seo_sections.append(f"GOOGLE META DESCRIPTION:\n{listing.get('google_meta_description', '')}")
-    if listing.get("pinterest_title"):
-        seo_sections.append(f"PINTEREST TITLE:\n{listing.get('pinterest_title', '')}")
-    if listing.get("pinterest_description"):
-        seo_sections.append(f"PINTEREST DESCRIPTION:\n{listing.get('pinterest_description', '')}")
-    if alt_text:
-        seo_sections.append("IMAGE ALT TEXT:\n" + "\n".join(f"- {item}" for item in alt_text))
-    if listing.get("seo_quality_score") is not None:
-        seo_sections.append(f"SEO QUALITY SCORE:\n{listing.get('seo_quality_score')}")
-    if seo_notes:
-        seo_sections.append("SEO QA NOTES:\n" + "\n".join(f"- {item}" for item in seo_notes))
-    if strategy:
-        seo_sections.append(
-            "SEO STRATEGY:\n"
-            + json.dumps(strategy, indent=2, ensure_ascii=False)
-        )
-
-    if seo_sections:
-        sections.append("CROSS-PLATFORM SEO:\n" + "\n\n".join(seo_sections))
 
     return "\n\n".join(sections)
 
@@ -398,13 +428,24 @@ def background_queue_product(req_data: dict, user_token: str = "default"):
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
 
+        streamer.publish({
+            "status": "notification",
+            "level": "success",
+            "title": "Product Download Finished",
+            "message": f"{title[:60]} is ready in the queue.",
+            "slug": slug,
+        }, user_token)
         streamer.publish({"status": "progress", "message": f"Finished downloading: {title[:30]}"}, user_token)
         # Broadcast final queue update
         streamer.publish({"status": "queue_updated"}, user_token)
 
 
     except Exception as e:
-        streamer.publish({"status": "error", "message": f"Queue error: {str(e)}"}, user_token)
+        streamer.publish({
+            "status": "error",
+            "title": "Queue Download Failed",
+            "message": f"Queue error: {str(e)}",
+        }, user_token)
 
 @app.post("/api/queue-product")
 def queue_product(req: QueueProductRequest, background_tasks: BackgroundTasks, user_token: str = Depends(get_user_token)):
@@ -491,11 +532,15 @@ class ImageGenerationSettings(BaseModel):
     model_key: str = DEFAULT_FAL_MODEL_KEY
     thinking_level: str = ""
 
+class CopywritingOptions(BaseModel):
+    depth: str = "quality" # "fast" | "balanced" | "quality" | "deep"
+
 class RunPipelineRequest(BaseModel):
     product_slug: str
     mode: str # "listing_only" | "listing_with_images" | "images_only"
     image_tasks: list[ImageTaskConfig] = []
     image_settings: ImageGenerationSettings = ImageGenerationSettings()
+    copywriting_options: CopywritingOptions = CopywritingOptions()
 
 class ReferenceImageRequest(BaseModel):
     product_slug: str
@@ -885,6 +930,68 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
             return ""
         return os.path.join(product_dir, local_path)
 
+    def get_source_label(entry, source_folder: str, source_index: int):
+        if isinstance(entry, dict):
+            return entry.get("alt") or entry.get("title") or f"{source_folder} {source_index + 1}"
+        return f"{source_folder} {source_index + 1}"
+
+    def build_target_record(entry, source_folder: str, source_index: int):
+        local_path = get_image_local_path(entry)
+        if not local_path:
+            return None
+        return {
+            "entry": entry,
+            "local_path": local_path,
+            "source_folder": source_folder,
+            "source_index": source_index,
+            "source_label": get_source_label(entry, source_folder, source_index),
+        }
+
+    def unique_target_records(records):
+        seen = set()
+        unique = []
+        for record in records:
+            if not record:
+                continue
+            key = record["local_path"].replace("\\", "/")
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(record)
+        return unique
+
+    def resolve_task_target_records(task_type: str, target_folder: str):
+        if target_folder == "selected_reference":
+            selected_reference = resolve_primary_reference_image(metadata)
+            if selected_reference:
+                source = selected_reference.get("source") or "selected_reference"
+                return unique_target_records([build_target_record(selected_reference, source, 0)])
+            return []
+
+        if task_type == "individual":
+            first_map = {
+                "first_main": "main_images",
+                "first_variation": "variation_images",
+                "first_description": "description_images",
+            }
+            source_folder = first_map.get(target_folder, target_folder)
+            entries = metadata.get(source_folder) or []
+            if entries:
+                return unique_target_records([build_target_record(entries[0], source_folder, 0)])
+            return []
+
+        if target_folder == "first_main":
+            entries = metadata.get("main_images") or []
+            if entries:
+                return unique_target_records([build_target_record(entries[0], "main_images", 0)])
+            return []
+
+        entries = metadata.get(target_folder) or []
+        return unique_target_records([
+            build_target_record(entry, target_folder, index)
+            for index, entry in enumerate(entries)
+        ])
+
     existing_generated_images = metadata.get("generated_images") or []
     if not isinstance(existing_generated_images, list):
         existing_generated_images = []
@@ -897,10 +1004,13 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
         prompt_preset = task.get("prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET) if isinstance(task, dict) else getattr(task, "prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET)
         prompt_label = prompt_preset if prompt_mode == "preset" else "custom"
         unique_suffix = uuid.uuid4().hex[:8]
-        base_name = sanitize_filename(
-            f"gen_{target_folder}_{prompt_label}_{run_stamp}_t{task_index + 1}_i{image_index + 1}_{unique_suffix}"
+        target_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", target_folder).strip("_")[:18] or "target"
+        prompt_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", prompt_label).strip("_")[:18] or "prompt"
+        base_name = (
+            f"gen_{run_stamp}_{unique_suffix}_"
+            f"t{task_index + 1}_i{image_index + 1}_{target_slug}_{prompt_slug}"
         )
-        return f"{base_name or f'gen_{run_stamp}_{unique_suffix}'}.png"
+        return f"{base_name}.png"
 
     for t_idx, task in enumerate(image_tasks):
         task_type = get_task_value(task, "task_type", "batch")
@@ -908,31 +1018,17 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
         target_label = "selected reference image" if target_folder == "selected_reference" else target_folder
         task_image_settings, task_thinking_level = resolve_task_image_settings(task)
 
-        target_images = []
+        target_records = []
         if target_folder == "selected_reference":
             selected_reference = resolve_primary_reference_image(metadata)
-            if selected_reference:
-                target_images = [selected_reference]
-                if selected_reference.get("selected_by") == "fallback":
-                    streamer.publish({
-                        "status": "progress",
-                        "message": "No manual reference selected; falling back to the first available product image.",
-                    }, user_token)
-        elif task_type == "individual":
-            if target_folder == "first_main" and metadata.get("main_images"):
-                target_images = [metadata["main_images"][0]]
-            elif target_folder == "first_variation" and metadata.get("variation_images"):
-                target_images = [metadata["variation_images"][0]]
-            elif target_folder == "first_description" and metadata.get("description_images"):
-                target_images = [metadata["description_images"][0]]
-        else:
-            if target_folder == "first_main":
-                if metadata.get("main_images"):
-                    target_images = [metadata["main_images"][0]]
-            else:
-                target_images = metadata.get(target_folder, [])
+            if selected_reference and selected_reference.get("selected_by") == "fallback":
+                streamer.publish({
+                    "status": "progress",
+                    "message": "No manual reference selected; falling back to the first available product image.",
+                }, user_token)
+        target_records = resolve_task_target_records(task_type, target_folder)
 
-        if not target_images:
+        if not target_records:
             streamer.publish({"status": "progress", "message": f"Task {t_idx+1}: No images found in {target_label}, skipping."}, user_token)
             continue
 
@@ -940,13 +1036,13 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
         streamer.publish({
             "status": "progress",
             "message": (
-                f"Task {t_idx+1}: Generating {len(target_images)} images for {target_label} "
+                f"Task {t_idx+1}: Generating {len(target_records)} images for {target_label} "
                 f"with {task_image_settings['label']}{thinking_note}..."
             )
         }, user_token)
 
-        for img_idx, img_meta in enumerate(target_images):
-            ref_path = get_abs_path(img_meta)
+        for img_idx, target_record in enumerate(target_records):
+            ref_path = get_abs_path(target_record["entry"])
             if not os.path.exists(ref_path):
                 streamer.publish({"status": "progress", "message": f"   -> Reference image missing, skipping item {img_idx+1}."}, user_token)
                 continue
@@ -958,7 +1054,13 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
             out_filename = build_generated_filename(target_folder, task, t_idx, img_idx)
             out_path = os.path.join(product_dir, out_filename)
 
-            streamer.publish({"status": "progress", "message": f"   -> Processing {img_idx+1}/{len(target_images)}..."}, user_token)
+            streamer.publish({
+                "status": "progress",
+                "message": (
+                    f"   -> Processing {img_idx+1}/{len(target_records)} "
+                    f"from {target_record['local_path']}..."
+                ),
+            }, user_token)
 
             res_path = generate_image_with_imagen(
                 prompt=final_prompt,
@@ -970,12 +1072,133 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
             )
 
             if res_path:
-                generated_images.append(out_filename)
+                generated_images.append({
+                    "local_path": out_filename,
+                    "source_image": target_record["local_path"],
+                    "source_folder": target_record["source_folder"],
+                    "source_index": target_record["source_index"],
+                    "source_label": target_record["source_label"],
+                    "task_type": task_type,
+                    "task_target": target_folder,
+                    "prompt_mode": get_task_value(task, "prompt_mode", "custom"),
+                    "prompt_preset": get_task_value(task, "prompt_preset", ""),
+                    "model_key": task_image_settings["model_key"],
+                    "thinking_level": task_thinking_level or "off",
+                })
 
     metadata["generated_images"] = generated_images
     return generated_images
 
-def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None, user_token: str = "default"):
+COPYWRITING_DEPTH_CONFIG = {
+    "fast": {
+        "desc_images": 1,
+        "main_images": 1,
+        "variation_images": 0,
+        "variation_spec_cap": 3,
+        "visual_scan": "when_text_weak",
+        "variation_scan": "if_size_signal",
+    },
+    "balanced": {
+        "desc_images": 3,
+        "main_images": 2,
+        "variation_images": 1,
+        "variation_spec_cap": 5,
+        "visual_scan": "always",
+        "variation_scan": "if_size_signal",
+    },
+    "quality": {
+        "desc_images": 4,
+        "main_images": 2,
+        "variation_images": 1,
+        "variation_spec_cap": 5,
+        "visual_scan": "always",
+        "variation_scan": "if_size_signal",
+    },
+    "deep": {
+        "desc_images": 6,
+        "main_images": 3,
+        "variation_images": 2,
+        "variation_spec_cap": None,
+        "visual_scan": "always",
+        "variation_scan": "always",
+    },
+}
+
+COPYWRITING_DEPTH_RANK = {
+    "fast": 1,
+    "balanced": 2,
+    "deep": 3,
+    "quality": 4,
+}
+
+SIZE_SIGNAL_RE = re.compile(
+    r"\b(size|sizes|dimension|dimensions|height|width|depth|length|capacity|"
+    r"weight|drop|strap|handle|inch|inches|cm|mm|meter|litre|liter|a4|"
+    r"small|medium|large|xl|xs|s\b|m\b|l\b)\b|"
+    r"\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch|inches|kg|g|lb|oz|l|liter|litre)|"
+    r"\d+\s*[xX×]\s*\d+",
+    re.IGNORECASE,
+)
+
+def normalize_copywriting_depth(copywriting_options: dict | None = None) -> str:
+    depth = str((copywriting_options or {}).get("depth") or "quality").strip().lower()
+    return depth if depth in COPYWRITING_DEPTH_CONFIG else "quality"
+
+def can_reuse_copywriting_cache(cached_depth: str | None, requested_depth: str) -> bool:
+    cached_rank = COPYWRITING_DEPTH_RANK.get(str(cached_depth or "").strip().lower(), 0)
+    requested_rank = COPYWRITING_DEPTH_RANK.get(requested_depth, COPYWRITING_DEPTH_RANK["quality"])
+    return cached_rank >= requested_rank
+
+def has_size_signal(*values) -> bool:
+    joined = " ".join(str(value or "") for value in values)
+    return bool(SIZE_SIGNAL_RE.search(joined))
+
+def has_useful_text_for_copywriting(desc_input: str, specs: dict) -> bool:
+    spec_values = " ".join(str(value or "") for value in (specs or {}).values())
+    combined = f"{desc_input or ''} {spec_values}".strip()
+    return len(combined) >= 180 and len(re.findall(r"[A-Za-z0-9]+", combined)) >= 35
+
+def get_image_path_from_entry(entry):
+    if isinstance(entry, dict):
+        return entry.get("local_path") or entry.get("path") or entry.get("url") or ""
+    return str(entry or "")
+
+def get_variation_signal_text(var_items: list) -> str:
+    chunks = []
+    for item in var_items or []:
+        if isinstance(item, dict):
+            chunks.extend([
+                item.get("alt", ""),
+                item.get("title", ""),
+                item.get("name", ""),
+                item.get("label", ""),
+                json.dumps(item.get("detected_specs", ""), ensure_ascii=False) if item.get("detected_specs") else "",
+            ])
+        else:
+            chunks.append(str(item or ""))
+    return " ".join(chunks)
+
+def should_scan_variation_specs(depth: str, var_items: list, desc_input: str, specs_text: str, image_facts: dict) -> bool:
+    if not var_items:
+        return False
+    config = COPYWRITING_DEPTH_CONFIG[depth]
+    if config["variation_scan"] == "always":
+        return True
+    signal_text = " ".join([
+        desc_input or "",
+        specs_text or "",
+        json.dumps(image_facts or {}, ensure_ascii=False),
+        get_variation_signal_text(var_items),
+    ])
+    return has_size_signal(signal_text)
+
+def cap_variation_items(depth: str, var_items: list) -> list:
+    cap = COPYWRITING_DEPTH_CONFIG[depth]["variation_spec_cap"]
+    if cap is None:
+        return var_items
+    return var_items[:cap]
+
+def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None, copywriting_options: dict = None, user_token: str = "default"):
     meta_path = None
     try:
         user_token = sanitize_user_token(user_token)
@@ -998,10 +1221,13 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         client = get_genai_client()
         title = metadata.get("title", "")
         price = metadata.get("price", "")
+        copywriting_depth = normalize_copywriting_depth(copywriting_options)
+        depth_config = COPYWRITING_DEPTH_CONFIG[copywriting_depth]
 
         if mode == "images_only":
+            generated_images = []
             if image_tasks:
-                run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
+                generated_images = run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
             else:
                 streamer.publish({"status": "progress", "message": "AI Images Only selected, but no image tasks were configured."}, user_token)
 
@@ -1010,20 +1236,46 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                 json.dump(metadata, f, indent=4, ensure_ascii=False)
 
             streamer.publish({"status": "queue_updated"}, user_token)
-            streamer.publish({"status": "progress", "message": f"Successfully completed image generation: {title[:30]}"}, user_token)
+            streamer.publish({
+                "status": "done",
+                "title": "Image Generation Finished",
+                "message": f"Generated images for {title[:60]}",
+                "output_dir_name": slug,
+                "generated_images": generated_images or metadata.get("generated_images", []),
+            }, user_token)
             return
+
+        # Build description input early so copywriting depth can decide whether scans are needed.
+        specs_text = "\n".join([f"{k}: {v}" for k, v in metadata.get("specs", {}).items()])
+        desc_input = metadata.get("description_text", "")
+        if specs_text:
+            desc_input = specs_text + "\n\n" + desc_input
+
+        streamer.publish({
+            "status": "progress",
+            "message": f"Copywriting depth: {copywriting_depth.title()}",
+        }, user_token)
 
         # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
         image_facts = metadata.get("image_facts")
-        if image_facts is not None:
-            streamer.publish({"status": "progress", "message": "Phase 1: Reusing cached image facts."}, user_token)
+        image_facts_depth = metadata.get("image_facts_depth")
+        if image_facts is not None and can_reuse_copywriting_cache(image_facts_depth, copywriting_depth):
+            streamer.publish({"status": "progress", "message": f"Phase 1: Reusing cached image facts ({image_facts_depth or 'legacy'})."}, user_token)
         else:
-            # Curate images to scan: description (up to 6), main (up to 3), variation (up to 2)
-            desc_imgs = (metadata.get("description_images") or [])[:6]
-            main_imgs = (metadata.get("main_images") or [])[:3]
+            if image_facts is not None:
+                streamer.publish({
+                    "status": "progress",
+                    "message": f"Phase 1: Refreshing image facts for {copywriting_depth.title()} quality.",
+                }, user_token)
+            should_scan_visuals = (
+                depth_config["visual_scan"] == "always"
+                or not has_useful_text_for_copywriting(desc_input, metadata.get("specs", {}))
+            )
+            desc_imgs = (metadata.get("description_images") or [])[:depth_config["desc_images"]]
+            main_imgs = (metadata.get("main_images") or [])[:depth_config["main_images"]]
             
             var_imgs = []
-            for item in (metadata.get("variation_images") or [])[:2]:
+            for item in (metadata.get("variation_images") or [])[:depth_config["variation_images"]]:
                 if isinstance(item, dict):
                     var_imgs.append(item.get("local_path"))
                 else:
@@ -1032,11 +1284,15 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             scan_targets_rel = desc_imgs + main_imgs + var_imgs
             scan_targets_abs = [os.path.join(product_dir, img_rel) for img_rel in scan_targets_rel if img_rel]
             
-            if scan_targets_abs:
+            if not should_scan_visuals:
+                streamer.publish({"status": "progress", "message": "Phase 1: Skipping visual scan; text/specs are enough for selected depth."}, user_token)
+                image_facts = {}
+            elif scan_targets_abs:
                 streamer.publish({"status": "progress", "message": f"Phase 1: Scanning {len(scan_targets_abs)} product images for visual specs..."}, user_token)
                 try:
                     image_facts = extract_visual_specs(scan_targets_abs, client)
                     metadata["image_facts"] = image_facts
+                    metadata["image_facts_depth"] = copywriting_depth
                     # Save progress intermediate
                     with open(meta_path, "w", encoding="utf-8") as f:
                         json.dump(metadata, f, indent=4, ensure_ascii=False)
@@ -1046,16 +1302,10 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             else:
                 image_facts = {}
 
-        # Build description input
-        specs_text = "\n".join([f"{k}: {v}" for k, v in metadata.get("specs", {}).items()])
-        desc_input = metadata.get("description_text", "")
-        if specs_text:
-            desc_input = specs_text + "\n\n" + desc_input
-
         # Fallback to visual scanning ONLY if there is absolutely no text at all
         if not desc_input or len(desc_input.strip()) < 50:
             local_imgs = []
-            for m in metadata.get("main_images", [])[:3]:
+            for m in metadata.get("main_images", [])[:max(1, depth_config["main_images"])]:
                 local_imgs.append(os.path.join(product_dir, m))
             if local_imgs:
                 streamer.publish({"status": "progress", "message": "No text description found. Fallback: visual description scan..."}, user_token)
@@ -1065,24 +1315,42 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
 
         # --- PHASE 1b: VARIATION SPECIFIC EXTRACTION ---
         variation_specs = metadata.get("variation_specs")
-        if variation_specs is not None:
-            streamer.publish({"status": "progress", "message": "Phase 1b: Reusing cached variation specs."}, user_token)
+        variation_specs_depth = metadata.get("variation_specs_depth")
+        if variation_specs is not None and can_reuse_copywriting_cache(variation_specs_depth, copywriting_depth):
+            streamer.publish({"status": "progress", "message": f"Phase 1b: Reusing cached variation specs ({variation_specs_depth or 'legacy'})."}, user_token)
         else:
+            if variation_specs is not None:
+                streamer.publish({
+                    "status": "progress",
+                    "message": f"Phase 1b: Refreshing variation specs for {copywriting_depth.title()} quality.",
+                }, user_token)
             var_items = metadata.get("variation_images") or []
-            if var_items:
-                streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(var_items)} variations for sizes & dimensions..."}, user_token)
+            should_scan_variations = should_scan_variation_specs(copywriting_depth, var_items, desc_input, specs_text, image_facts)
+            capped_var_items = cap_variation_items(copywriting_depth, var_items)
+            if should_scan_variations and capped_var_items:
+                if len(capped_var_items) < len(var_items):
+                    streamer.publish({
+                        "status": "progress",
+                        "message": (
+                            f"Phase 1b: Scanning {len(capped_var_items)} of {len(var_items)} "
+                            "variations for size/dimension clues."
+                        ),
+                    }, user_token)
+                else:
+                    streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(capped_var_items)} variations for sizes & dimensions..."}, user_token)
                 try:
                     variation_specs = extract_variation_specs(
-                        variations=var_items,
+                        variations=capped_var_items,
                         product_dir=product_dir,
                         overall_specs=image_facts,
                         scraped_desc=desc_input,
                         client=client
                     )
                     metadata["variation_specs"] = variation_specs
+                    metadata["variation_specs_depth"] = copywriting_depth
                     
                     # Update each variation image's detected_specs as well
-                    for item, spec in zip(metadata["variation_images"], variation_specs):
+                    for item, spec in zip(capped_var_items, variation_specs):
                         if isinstance(item, dict):
                             item["detected_specs"] = spec
                     
@@ -1092,6 +1360,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                     print(f"Warning: Variation spec extraction failed: {ex}")
                     variation_specs = []
             else:
+                if var_items:
+                    streamer.publish({
+                        "status": "progress",
+                        "message": "Phase 1b: Skipping variation scan; no size/dimension signals found for selected depth.",
+                    }, user_token)
                 variation_specs = []
 
         # --- PHASE 2 & 3: COPYWRITING & SELF-REVIEW ---
@@ -1105,7 +1378,8 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             client=client, 
             presets=presets, 
             image_facts=image_facts,
-            variation_specs=variation_specs
+            variation_specs=variation_specs,
+            copywriting_depth=copywriting_depth,
         )
         
         if not etsy_listing:
@@ -1115,8 +1389,9 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         metadata["etsy_listing"] = etsy_listing
 
         # Image generation if requested
+        generated_images = []
         if mode == "listing_with_images" and image_tasks:
-            run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
+            generated_images = run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
 
         metadata["status"] = "done"
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -1132,7 +1407,14 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             print(f"Warning: Could not write listing.txt: {txt_err}")
 
         streamer.publish({"status": "queue_updated"}, user_token)
-        streamer.publish({"status": "progress", "message": f"Successfully completed: {title[:30]}"}, user_token)
+        streamer.publish({
+            "status": "done",
+            "title": "Listing Finished",
+            "message": f"Copywriting completed for {title[:60]}",
+            "output_dir_name": slug,
+            "listing": etsy_listing,
+            "generated_images": generated_images or metadata.get("generated_images", []),
+        }, user_token)
 
     except Exception as e:
         # Mark as failed
@@ -1148,12 +1430,18 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             streamer.publish({"status": "queue_updated"}, user_token)
         except Exception:
             pass
-        streamer.publish({"status": "error", "message": f"Pipeline error: {str(e)}"}, user_token)
+        streamer.publish({
+            "status": "error",
+            "title": "Pipeline Failed",
+            "message": f"Pipeline error: {str(e)}",
+            "slug": slug,
+        }, user_token)
 
 @app.post("/api/run-pipeline")
 def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks, user_token: str = Depends(get_user_token)):
     image_settings = req.image_settings.model_dump() if req.image_settings else {}
-    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings, user_token)
+    copywriting_options = req.copywriting_options.model_dump() if req.copywriting_options else {}
+    background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings, copywriting_options, user_token)
     return {"status": "success", "message": "Pipeline execution started"}
 
 class ExportZipRequest(BaseModel):
