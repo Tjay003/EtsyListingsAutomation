@@ -39,12 +39,19 @@ if errorlevel 1 (
 
 echo.
 if not exist ".env" (
-    echo IMPORTANT: Create a .env file in this folder before starting the app.
-    echo Minimum recommended values:
-    echo GEMINI_API_KEY=your_key_here
-    echo FAL_KEY=your_key_here
-    echo OUTPUT_DIR=%%USERPROFILE%%\Downloads\AliExpressQueue
-    echo.
+    if exist ".env.example" (
+        echo Creating .env from .env.example...
+        copy ".env.example" ".env" >nul
+        echo IMPORTANT: Open .env and add the private API keys before using AI features.
+        echo.
+    ) else (
+        echo IMPORTANT: Create a .env file in this folder before starting the app.
+        echo Minimum recommended values:
+        echo GEMINI_API_KEY=your_key_here
+        echo FAL_KEY=your_key_here
+        echo OUTPUT_DIR=%%USERPROFILE%%\Downloads\AliExpressQueue
+        echo.
+    )
 ) else (
     echo .env found.
 )

@@ -5,7 +5,7 @@ __pycache__/
 
 # Local configurations and keys
 .env
-.env.example
+!.env.example
 
 # Testing HTML dumps (AliExpress pages)
 *.html

@@ -648,8 +648,52 @@ def _strip_description_hype(text):
     for term in DESCRIPTION_HYPE_TERMS:
         clean = re.sub(rf"\b{re.escape(term)}\b", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\b(is|are|making it|makes it)\s+for\b", r"\1 suited for", clean, flags=re.IGNORECASE)
-    clean = re.sub(r"\s+([,.;:])", r"\1", clean)
-    return re.sub(r"\s+", " ", clean).strip()
+    clean = re.sub(r"[ \t]+([,.;:])", r"\1", clean)
+    clean = re.sub(r"[ \t]+", " ", clean)
+    clean = re.sub(r"[ \t]*\n[ \t]*", "\n", clean)
+    return re.sub(r"\n{3,}", "\n\n", clean).strip()
+
+def _format_listing_description(description):
+    """Normalize Etsy-safe description layout without collapsing paragraphs."""
+    clean = str(description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not clean:
+        return ""
+
+    clean = re.sub(r"\*\*(.*?)\*\*", r"\1", clean)
+    clean = re.sub(r"__(.*?)__", r"\1", clean)
+    clean = re.sub(r"(?m)^\s*[\*\u2022]\s+", "- ", clean)
+    clean = re.sub(r"(?m)^\s*[-]\s+", "- ", clean)
+    clean = re.sub(r"\s+[\*\u2022]\s+(?=[A-Za-z0-9])", "\n- ", clean)
+    clean = clean.replace("*", "").replace("_", "")
+    clean = re.sub(r"\s+-\s+(?=[A-Za-z0-9][A-Za-z0-9 /&()'-]{1,45}:)", "\n- ", clean)
+    clean = re.sub(r"\s*(product details)\s*:\s*", "\n\nPRODUCT DETAILS:\n", clean, flags=re.IGNORECASE)
+    clean = re.sub(
+        r"\s+(please (?:refer|review)|refer to)\b",
+        r"\n\nNOTE:\n\1",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    lines = []
+    for raw_line in clean.split("\n"):
+        line = re.sub(r"[ \t]+", " ", raw_line).strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if line.upper() == "PRODUCT DETAILS:":
+            line = "PRODUCT DETAILS:"
+            if lines and lines[-1] != "":
+                lines.append("")
+        elif line.upper() == "NOTE:":
+            line = "NOTE:"
+            if lines and lines[-1] != "":
+                lines.append("")
+        lines.append(line)
+
+    clean = "\n".join(lines).strip()
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
+    return clean
 
 def _trim_at_word(text, limit):
     clean = re.sub(r"\s+", " ", str(text or "")).strip(" |,-")
@@ -1106,7 +1150,7 @@ def _compact_description(description, limit):
 
 def _ensure_seo_metadata(listing_data, seo_strategy, source_price=""):
     strategy = _coerce_seo_strategy(seo_strategy)
-    description = _strip_description_hype(listing_data.get("description", ""))
+    description = _format_listing_description(_strip_description_hype(listing_data.get("description", "")))
     listing_data["description"] = description
     title = _clean_marketplace_title(listing_data.get("title", ""), description, strategy)
 
@@ -1365,9 +1409,190 @@ def refine_listing_from_qa_notes(listing_data: dict, qa_notes: list, source_cont
         print(f"Error during strict QA correction pass via Gemini: {e}")
         return listing_data
 
+LISTING_TWEAK_PRESETS = {
+    "fix_title": (
+        "Rewrite only the Etsy title so it is natural, buyer-friendly, under 140 characters, "
+        "and starts with the main product noun plus supported objective traits."
+    ),
+    "fix_category": (
+        "Choose a more specific Etsy-style category path. Never return Not categorized, "
+        "uncategorized, none, or a vague generic product category when the product type is clear."
+    ),
+    "improve_tags": (
+        "Improve Etsy tags so there are exactly 13 unique tags, each 20 characters or less, "
+        "covering product identity, supported traits, use cases, and realistic gift intent only when applicable."
+    ),
+    "safer_description": (
+        "Revise the description to remove unsupported claims while keeping it readable. "
+        "Keep a light lifestyle opening, then a Product Details section with only confirmed facts."
+    ),
+    "regenerate_description": (
+        "Regenerate the description from the existing listing and supporting source facts. "
+        "Keep it Etsy-safe, scannable, factually conservative, and properly separated with line breaks."
+    ),
+    "regenerate_all": (
+        "Regenerate the selected copy fields from the current listing and supporting source facts. "
+        "Preserve factual accuracy and avoid drifting away from the product identity."
+    ),
+    "custom": "Apply the shop owner's custom instruction while preserving factual accuracy.",
+}
+
+def tweak_etsy_listing(
+    existing_listing: dict,
+    preset_key: str = "custom",
+    instruction: str = "",
+    fields: list | None = None,
+    source_context: str = "",
+    image_facts: dict | None = None,
+    variation_specs: list | None = None,
+    price: str = "",
+    presets: dict | None = None,
+    client=None,
+) -> dict | None:
+    """Revise selected listing fields using the current output as the primary reference."""
+    base_listing = dict(existing_listing or {})
+    if not base_listing:
+        return None
+
+    allowed_fields = {"title", "category", "description", "tags"}
+    selected_fields = [field for field in (fields or allowed_fields) if field in allowed_fields]
+    if not selected_fields:
+        selected_fields = ["title", "category", "description", "tags"]
+
+    if not client:
+        client = get_genai_client()
+    presets = presets or {}
+    image_facts = image_facts or {}
+    variation_specs = variation_specs or []
+
+    preset_key = str(preset_key or "custom").strip() or "custom"
+    preset_instruction = LISTING_TWEAK_PRESETS.get(preset_key, LISTING_TWEAK_PRESETS["custom"])
+    custom_instruction = str(instruction or "").strip()
+    custom_rules = str(presets.get("custom_prompt_rules") or "").strip()
+
+    strategy = _coerce_seo_strategy(
+        base_listing.get("seo_strategy"),
+        base_listing.get("title", ""),
+        base_listing.get("description", ""),
+        image_facts,
+        variation_specs,
+    )
+
+    owner_rules = ""
+    if custom_rules:
+        owner_rules = (
+            "SHOP OWNER COPYWRITING RULES (high priority):\n"
+            f"{custom_rules}\n"
+            "Follow these unless they conflict with factual accuracy, source support, Etsy compliance, or marketplace safety.\n\n"
+        )
+
+    prompt = (
+        "You are tweaking an existing Etsy listing, not writing a brand-new product analysis.\n"
+        "Use the Current Listing as the primary reference. Use Supporting Facts only to prevent or correct factual mistakes.\n"
+        "Do not scan or request images. Do not invent materials, dimensions, pockets, waterproofing, handmade/eco/luxury/designer claims, compatibility, or capacity.\n"
+        "Only revise the selected fields. Copy all unselected fields exactly from the Current Listing.\n"
+        "If the description contains a policy/footer section, keep it intact unless the selected instruction explicitly asks to remove or rewrite it.\n"
+        "Use plain Etsy-safe text: no markdown bold/italic, no asterisks for emphasis, and no underscores.\n"
+        "Use double newlines between the opening paragraph, PRODUCT DETAILS, notes, and policy/footer sections.\n\n"
+        f"{owner_rules}"
+        f"Selected Fields: {', '.join(selected_fields)}\n"
+        f"Preset: {preset_key}\n"
+        f"Preset Instruction: {preset_instruction}\n"
+        f"Custom Instruction: {custom_instruction or 'None'}\n\n"
+        "Current Listing:\n"
+        f"{json.dumps(base_listing, indent=2, ensure_ascii=False)}\n\n"
+        "Supporting Facts:\n"
+        f"{source_context or 'None'}\n\n"
+        "Cached Image Facts:\n"
+        f"{json.dumps(image_facts, indent=2, ensure_ascii=False)}\n\n"
+        "Cached Variation Specs:\n"
+        f"{json.dumps(variation_specs, indent=2, ensure_ascii=False)}\n\n"
+        "SEO Strategy:\n"
+        f"{json.dumps(strategy, indent=2, ensure_ascii=False)}\n\n"
+        "Output strictly as JSON matching the EtsyListing schema, including title, description, tags, suggested_price, category, and seo_strategy."
+    )
+
+    candidate = None
+    openai_client = get_openai_client()
+    if openai_client:
+        try:
+            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            response = openai_client.chat.completions.create(
+                model=openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_tokens=1500,
+            )
+            candidate = json.loads(response.choices[0].message.content)
+        except Exception as e:
+            print(f"Error during OpenAI listing tweak: {e}. Falling back to Gemini...")
+            candidate = None
+
+    if candidate is None:
+        try:
+            response = generate_content_with_retry(
+                client=client,
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=EtsyListing,
+                )
+            )
+            candidate = json.loads(response.text)
+        except Exception as e:
+            print(f"Error during Gemini listing tweak: {e}")
+            return None
+
+    revised = dict(base_listing)
+    for field in selected_fields:
+        if field not in candidate:
+            continue
+        value = candidate.get(field)
+        if field == "tags":
+            if isinstance(value, str):
+                value = [part.strip() for part in re.split(r",|\n", value) if part.strip()]
+            revised[field] = _as_list(value)
+        elif field == "description":
+            revised[field] = _format_listing_description(_strip_description_hype(value))
+        elif field == "title":
+            revised[field] = str(value or "").strip()
+        elif field == "category":
+            revised[field] = str(value or "").strip()
+
+    revised["seo_strategy"] = candidate.get("seo_strategy") or revised.get("seo_strategy") or strategy
+    original_price = base_listing.get("suggested_price", "")
+    revised["suggested_price"] = original_price
+
+    revised = finalize_listing_seo(
+        revised,
+        revised.get("seo_strategy") or strategy,
+        client,
+        source_price=original_price or price,
+        source_context=source_context,
+    )
+
+    for field in allowed_fields:
+        if field not in selected_fields and field in base_listing:
+            revised[field] = base_listing[field]
+    revised["suggested_price"] = original_price
+
+    score, notes = score_listing_seo(revised, source_context)
+    repairs = build_listing_repair_instructions(revised, source_context)
+    revised["seo_quality_score"] = score
+    revised["seo_qa_notes"] = notes
+    revised["repair_instructions"] = repairs
+    revised["needs_review"] = (
+        score < 85
+        or bool(repairs)
+        or any("trademark" in note.lower() for note in notes)
+    )
+    revised["review_reasons"] = _dedupe_preserve_order([*notes, *repairs]) if revised["needs_review"] else []
+    return revised
+
 def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
     """Inject preset add-ons into the listing description and apply policy override."""
-    desc = listing_data.get("description", "").strip()
+    desc = _format_listing_description(listing_data.get("description", ""))
 
     # Prepend shop intro if set
     shop_intro = (presets.get("shop_intro") or "").strip()
@@ -1397,6 +1622,7 @@ def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
         desc = desc + "\n\n" + "\n".join(addons)
 
     desc += policy_block
+    desc = _format_listing_description(desc)
     listing_data["description"] = desc
     return listing_data
 

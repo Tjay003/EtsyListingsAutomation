@@ -5,6 +5,7 @@ import asyncio
 import logging
 import re
 import shutil
+import threading
 import urllib.parse
 import urllib.request
 import uuid
@@ -25,6 +26,7 @@ from src.ai_helper import (
     get_genai_client,
     generate_description_from_images,
     write_etsy_listing,
+    tweak_etsy_listing,
     generate_image_prompt_details,
     extract_visual_specs,
     extract_variation_specs
@@ -134,6 +136,52 @@ def build_product_image_url(slug: str, image_path: str, user_token: str) -> str:
     token_part = urllib.parse.quote(sanitize_user_token(user_token), safe="")
     return f"/api/product-image/{slug_part}/{image_part}?token={token_part}"
 
+class PipelineCancelled(Exception):
+    pass
+
+pipeline_cancel_requests = set()
+pipeline_cancel_lock = threading.Lock()
+
+def pipeline_cancel_key(user_token: str, slug: str) -> str:
+    return f"{sanitize_user_token(user_token)}:{slug}"
+
+def request_pipeline_cancel(user_token: str, slug: str):
+    with pipeline_cancel_lock:
+        pipeline_cancel_requests.add(pipeline_cancel_key(user_token, slug))
+
+def clear_pipeline_cancel(user_token: str, slug: str):
+    with pipeline_cancel_lock:
+        pipeline_cancel_requests.discard(pipeline_cancel_key(user_token, slug))
+
+def is_pipeline_cancel_requested(user_token: str, slug: str) -> bool:
+    with pipeline_cancel_lock:
+        return pipeline_cancel_key(user_token, slug) in pipeline_cancel_requests
+
+def check_pipeline_cancelled(user_token: str, slug: str):
+    if is_pipeline_cancel_requested(user_token, slug):
+        raise PipelineCancelled("Pipeline cancelled by user")
+
+def mark_pipeline_cancelled(user_token: str, slug: str, meta_path: str, metadata: dict | None = None):
+    if metadata is None:
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            metadata = {}
+    metadata["status"] = "cancelled"
+    metadata["cancel_requested"] = False
+    metadata["cancelled_at"] = datetime.now().isoformat(timespec="seconds")
+    metadata["error"] = "Pipeline cancelled by user"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4, ensure_ascii=False)
+    streamer.publish({"status": "queue_updated"}, user_token)
+    streamer.publish({
+        "status": "cancelled",
+        "title": "Pipeline Cancelled",
+        "message": f"Stopped processing {metadata.get('title', slug)[:60]}.",
+        "slug": slug,
+    }, user_token)
+
 app = FastAPI(title="Etsy Listings Automation API")
 
 app.add_middleware(
@@ -180,11 +228,20 @@ streamer = ProgressStreamer()
 
 class ListingSaveRequest(BaseModel):
     title: str
+    category: str = ""
     suggested_price: str
     description: str
     tags: list
     output_dir_name: str
     variation_images: list = None
+
+class ListingTweakRequest(BaseModel):
+    output_dir_name: str
+    preset_key: str = "custom"
+    instruction: str = ""
+    fields: list | None = None
+    context_mode: str = "existing_output"
+    current_listing: dict | None = None
 
 class SettingsUpdateRequest(BaseModel):
     output_dir: str
@@ -256,6 +313,25 @@ def format_listing_txt(listing: dict) -> str:
     ]
 
     return "\n\n".join(sections)
+
+def build_listing_tweak_source_context(metadata: dict) -> str:
+    """Build concise factual context for copy tweaks without rescanning images."""
+    specs = metadata.get("specs") or {}
+    variation_specs = metadata.get("variation_specs") or []
+    image_facts = metadata.get("image_facts") or {}
+    context_parts = [
+        f"Original product title: {metadata.get('title', '')}",
+        f"Original price: {metadata.get('price', '')}",
+        "Supplier/source text:",
+        metadata.get("description_text", "") or "",
+        "Scraped specs:",
+        json.dumps(specs, indent=2, ensure_ascii=False),
+        "Cached image facts:",
+        json.dumps(image_facts, indent=2, ensure_ascii=False),
+        "Cached variation specs:",
+        json.dumps(variation_specs, indent=2, ensure_ascii=False),
+    ]
+    return "\n".join(str(part) for part in context_parts if part is not None).strip()
 
 @app.get("/api/listing-presets")
 def get_listing_presets():
@@ -532,6 +608,16 @@ class ImageGenerationSettings(BaseModel):
     model_key: str = DEFAULT_FAL_MODEL_KEY
     thinking_level: str = ""
 
+class GeneratedImageTweakRequest(BaseModel):
+    product_slug: str
+    generated_image: str
+    reference_image: str = ""
+    prompt_mode: str = "preset"
+    prompt_preset: str = "auto_product_staging"
+    prompt: str = ""
+    model_key: str = DEFAULT_FAL_MODEL_KEY
+    thinking_level: str = "off"
+
 class CopywritingOptions(BaseModel):
     depth: str = "quality" # "fast" | "balanced" | "quality" | "deep"
 
@@ -541,6 +627,9 @@ class RunPipelineRequest(BaseModel):
     image_tasks: list[ImageTaskConfig] = []
     image_settings: ImageGenerationSettings = ImageGenerationSettings()
     copywriting_options: CopywritingOptions = CopywritingOptions()
+
+class CancelPipelineRequest(BaseModel):
+    product_slug: str
 
 class ReferenceImageRequest(BaseModel):
     product_slug: str
@@ -564,6 +653,37 @@ def normalize_product_image_path(product_dir: str, local_path: str):
         raise HTTPException(status_code=404, detail="Reference image file not found")
 
     return clean_rel, image_abs
+
+def normalize_generated_image_path(metadata: dict, product_dir: str, local_path: str):
+    if not local_path:
+        raise HTTPException(status_code=400, detail="Missing generated image path")
+
+    clean_rel = local_path.replace("\\", "/").lstrip("/")
+    generated_images = metadata.get("generated_images") or []
+    if not isinstance(generated_images, list):
+        generated_images = []
+
+    matched_entry = None
+    for entry in generated_images:
+        entry_path = get_image_local_path(entry)
+        if entry_path and entry_path.replace("\\", "/").lstrip("/") == clean_rel:
+            matched_entry = entry
+            break
+
+    if matched_entry is None:
+        raise HTTPException(status_code=404, detail="Generated image not found in product metadata")
+
+    product_abs = os.path.abspath(product_dir)
+    image_abs = os.path.abspath(os.path.join(product_abs, clean_rel))
+    try:
+        if os.path.commonpath([product_abs, image_abs]) != product_abs:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid generated image path")
+    if not os.path.exists(image_abs):
+        raise HTTPException(status_code=404, detail="Generated image file not found")
+
+    return clean_rel, image_abs, matched_entry
 
 def get_image_local_path(image_entry):
     if isinstance(image_entry, dict):
@@ -882,7 +1002,16 @@ def set_reference_image(req: ReferenceImageRequest, user_token: str = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: list, image_settings: dict, client, user_token: str = "default"):
+def run_image_generation_tasks(
+    metadata: dict,
+    product_dir: str,
+    image_tasks: list,
+    image_settings: dict,
+    client,
+    user_token: str = "default",
+    product_slug: str = "",
+    meta_path: str | None = None,
+):
     selected_image_settings = resolve_fal_image_settings(
         (image_settings or {}).get("model_key")
     )
@@ -999,6 +1128,16 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
 
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    def maybe_cancel():
+        if product_slug:
+            check_pipeline_cancelled(user_token, product_slug)
+
+    def save_partial_generated_images():
+        metadata["generated_images"] = generated_images
+        if meta_path:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=4, ensure_ascii=False)
+
     def build_generated_filename(target_folder: str, task, task_index: int, image_index: int):
         prompt_mode = task.get("prompt_mode", "custom") if isinstance(task, dict) else getattr(task, "prompt_mode", "custom")
         prompt_preset = task.get("prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET) if isinstance(task, dict) else getattr(task, "prompt_preset", DEFAULT_IMAGE_PROMPT_PRESET)
@@ -1013,6 +1152,7 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
         return f"{base_name}.png"
 
     for t_idx, task in enumerate(image_tasks):
+        maybe_cancel()
         task_type = get_task_value(task, "task_type", "batch")
         target_folder = get_task_value(task, "target", "main_images")
         target_label = "selected reference image" if target_folder == "selected_reference" else target_folder
@@ -1042,12 +1182,14 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
         }, user_token)
 
         for img_idx, target_record in enumerate(target_records):
+            maybe_cancel()
             ref_path = get_abs_path(target_record["entry"])
             if not os.path.exists(ref_path):
                 streamer.publish({"status": "progress", "message": f"   -> Reference image missing, skipping item {img_idx+1}."}, user_token)
                 continue
 
             visual_details = generate_image_prompt_details(ref_path, client)
+            maybe_cancel()
             prompt_style = resolve_image_task_prompt(task, metadata, visual_details)
             final_prompt = prompt_style
 
@@ -1085,6 +1227,8 @@ def run_image_generation_tasks(metadata: dict, product_dir: str, image_tasks: li
                     "model_key": task_image_settings["model_key"],
                     "thinking_level": task_thinking_level or "off",
                 })
+                save_partial_generated_images()
+            maybe_cancel()
 
     metadata["generated_images"] = generated_images
     return generated_images
@@ -1200,6 +1344,7 @@ def cap_variation_items(depth: str, var_items: list) -> list:
 
 def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None, copywriting_options: dict = None, user_token: str = "default"):
     meta_path = None
+    metadata = {}
     try:
         user_token = sanitize_user_token(user_token)
         product_dir = resolve_product_dir(user_token, slug)
@@ -1211,27 +1356,44 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
             
-            metadata["status"] = "processing"
+        metadata["status"] = "processing"
+        metadata["cancel_requested"] = is_pipeline_cancel_requested(user_token, slug)
+        if not metadata["cancel_requested"]:
+            metadata.pop("cancelled_at", None)
+            metadata.pop("error", None)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
             
         streamer.publish({"status": "queue_updated"}, user_token)
         streamer.publish({"status": "progress", "message": f"Processing item: {metadata.get('title')[:30]}..."}, user_token)
+        check_pipeline_cancelled(user_token, slug)
 
         client = get_genai_client()
         title = metadata.get("title", "")
         price = metadata.get("price", "")
         copywriting_depth = normalize_copywriting_depth(copywriting_options)
         depth_config = COPYWRITING_DEPTH_CONFIG[copywriting_depth]
+        check_pipeline_cancelled(user_token, slug)
 
         if mode == "images_only":
             generated_images = []
             if image_tasks:
-                generated_images = run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
+                generated_images = run_image_generation_tasks(
+                    metadata,
+                    product_dir,
+                    image_tasks,
+                    image_settings,
+                    client,
+                    user_token,
+                    slug,
+                    meta_path,
+                )
             else:
                 streamer.publish({"status": "progress", "message": "AI Images Only selected, but no image tasks were configured."}, user_token)
 
+            check_pipeline_cancelled(user_token, slug)
             metadata["status"] = "done"
+            metadata["cancel_requested"] = False
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=4, ensure_ascii=False)
 
@@ -1255,6 +1417,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "status": "progress",
             "message": f"Copywriting depth: {copywriting_depth.title()}",
         }, user_token)
+        check_pipeline_cancelled(user_token, slug)
 
         # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
         image_facts = metadata.get("image_facts")
@@ -1288,9 +1451,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                 streamer.publish({"status": "progress", "message": "Phase 1: Skipping visual scan; text/specs are enough for selected depth."}, user_token)
                 image_facts = {}
             elif scan_targets_abs:
+                check_pipeline_cancelled(user_token, slug)
                 streamer.publish({"status": "progress", "message": f"Phase 1: Scanning {len(scan_targets_abs)} product images for visual specs..."}, user_token)
                 try:
                     image_facts = extract_visual_specs(scan_targets_abs, client)
+                    check_pipeline_cancelled(user_token, slug)
                     metadata["image_facts"] = image_facts
                     metadata["image_facts_depth"] = copywriting_depth
                     # Save progress intermediate
@@ -1304,16 +1469,19 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
 
         # Fallback to visual scanning ONLY if there is absolutely no text at all
         if not desc_input or len(desc_input.strip()) < 50:
+            check_pipeline_cancelled(user_token, slug)
             local_imgs = []
             for m in metadata.get("main_images", [])[:max(1, depth_config["main_images"])]:
                 local_imgs.append(os.path.join(product_dir, m))
             if local_imgs:
                 streamer.publish({"status": "progress", "message": "No text description found. Fallback: visual description scan..."}, user_token)
                 desc_input = generate_description_from_images(local_imgs, client)
+                check_pipeline_cancelled(user_token, slug)
             else:
                 desc_input = "Generic product details."
 
         # --- PHASE 1b: VARIATION SPECIFIC EXTRACTION ---
+        check_pipeline_cancelled(user_token, slug)
         variation_specs = metadata.get("variation_specs")
         variation_specs_depth = metadata.get("variation_specs_depth")
         if variation_specs is not None and can_reuse_copywriting_cache(variation_specs_depth, copywriting_depth):
@@ -1339,6 +1507,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                 else:
                     streamer.publish({"status": "progress", "message": f"Phase 1b: Scanning {len(capped_var_items)} variations for sizes & dimensions..."}, user_token)
                 try:
+                    check_pipeline_cancelled(user_token, slug)
                     variation_specs = extract_variation_specs(
                         variations=capped_var_items,
                         product_dir=product_dir,
@@ -1346,6 +1515,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                         scraped_desc=desc_input,
                         client=client
                     )
+                    check_pipeline_cancelled(user_token, slug)
                     metadata["variation_specs"] = variation_specs
                     metadata["variation_specs_depth"] = copywriting_depth
                     
@@ -1368,6 +1538,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
                 variation_specs = []
 
         # --- PHASE 2 & 3: COPYWRITING & SELF-REVIEW ---
+        check_pipeline_cancelled(user_token, slug)
         streamer.publish({"status": "progress", "message": "Phase 2: Generating enriched copywriting & running Phase 3 self-critique..."}, user_token)
         presets = load_listing_presets()
         
@@ -1381,6 +1552,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             variation_specs=variation_specs,
             copywriting_depth=copywriting_depth,
         )
+        check_pipeline_cancelled(user_token, slug)
         
         if not etsy_listing:
             raise Exception("Copywriting generation failed.")
@@ -1391,9 +1563,21 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         # Image generation if requested
         generated_images = []
         if mode == "listing_with_images" and image_tasks:
-            generated_images = run_image_generation_tasks(metadata, product_dir, image_tasks, image_settings, client, user_token)
+            check_pipeline_cancelled(user_token, slug)
+            generated_images = run_image_generation_tasks(
+                metadata,
+                product_dir,
+                image_tasks,
+                image_settings,
+                client,
+                user_token,
+                slug,
+                meta_path,
+            )
 
+        check_pipeline_cancelled(user_token, slug)
         metadata["status"] = "done"
+        metadata["cancel_requested"] = False
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
 
@@ -1416,6 +1600,12 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "generated_images": generated_images or metadata.get("generated_images", []),
         }, user_token)
 
+    except PipelineCancelled:
+        try:
+            if meta_path:
+                mark_pipeline_cancelled(user_token, slug, meta_path, metadata)
+        except Exception:
+            pass
     except Exception as e:
         # Mark as failed
         try:
@@ -1436,13 +1626,220 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "message": f"Pipeline error: {str(e)}",
             "slug": slug,
         }, user_token)
+    finally:
+        try:
+            clear_pipeline_cancel(user_token, slug)
+        except Exception:
+            pass
 
 @app.post("/api/run-pipeline")
 def run_pipeline_api(req: RunPipelineRequest, background_tasks: BackgroundTasks, user_token: str = Depends(get_user_token)):
     image_settings = req.image_settings.model_dump() if req.image_settings else {}
     copywriting_options = req.copywriting_options.model_dump() if req.copywriting_options else {}
+    clear_pipeline_cancel(user_token, req.product_slug)
     background_tasks.add_task(background_run_pipeline, req.product_slug, req.mode, req.image_tasks, image_settings, copywriting_options, user_token)
     return {"status": "success", "message": "Pipeline execution started"}
+
+@app.post("/api/cancel-pipeline")
+def cancel_pipeline_api(req: CancelPipelineRequest, user_token: str = Depends(get_user_token)):
+    slug = req.product_slug
+    product_dir = resolve_product_dir(user_token, slug)
+    meta_path = os.path.join(product_dir, "metadata.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    status = metadata.get("status", "queued")
+    if status not in {"processing", "cancelling"}:
+        return {
+            "status": "idle",
+            "message": f"No active pipeline is running for {metadata.get('title', slug)[:60]}",
+        }
+
+    request_pipeline_cancel(user_token, slug)
+    metadata["status"] = "cancelling"
+    metadata["cancel_requested"] = True
+    metadata["cancel_requested_at"] = datetime.now().isoformat(timespec="seconds")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4, ensure_ascii=False)
+
+    streamer.publish({"status": "queue_updated"}, user_token)
+    streamer.publish({
+        "status": "progress",
+        "message": f"Cancel requested for {metadata.get('title', slug)[:60]}. Waiting for the current API call to finish safely...",
+        "slug": slug,
+    }, user_token)
+    return {"status": "success", "message": "Pipeline cancellation requested"}
+
+@app.post("/api/tweak-listing")
+def tweak_listing(req: ListingTweakRequest, user_token: str = Depends(get_user_token)):
+    try:
+        if req.context_mode != "existing_output":
+            raise HTTPException(status_code=400, detail="Only existing_output tweak context is supported in this version.")
+
+        product_dir = resolve_product_dir(user_token, req.output_dir_name)
+        meta_path = os.path.join(product_dir, "metadata.json")
+
+        if not os.path.exists(meta_path):
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        current_listing = req.current_listing if isinstance(req.current_listing, dict) and req.current_listing else metadata.get("etsy_listing")
+        if not isinstance(current_listing, dict) or not current_listing:
+            raise HTTPException(status_code=400, detail="This product has no generated Etsy listing to tweak yet.")
+
+        allowed_fields = {"title", "category", "description", "tags"}
+        requested_fields = req.fields or ["title", "category", "description", "tags"]
+        fields = [field for field in requested_fields if field in allowed_fields]
+        if not fields:
+            raise HTTPException(status_code=400, detail="Select at least one copy field to tweak.")
+
+        listing = tweak_etsy_listing(
+            existing_listing=current_listing,
+            preset_key=req.preset_key,
+            instruction=req.instruction,
+            fields=fields,
+            source_context=build_listing_tweak_source_context(metadata),
+            image_facts=metadata.get("image_facts") or {},
+            variation_specs=metadata.get("variation_specs") or [],
+            price=metadata.get("price", ""),
+            presets=load_listing_presets(),
+            client=get_genai_client(),
+        )
+
+        if not listing:
+            raise HTTPException(status_code=500, detail="Copy tweak failed.")
+
+        return {"status": "success", "listing": listing}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tweak-generated-image")
+def tweak_generated_image(req: GeneratedImageTweakRequest, user_token: str = Depends(get_user_token)):
+    try:
+        product_dir = resolve_product_dir(user_token, req.product_slug)
+        meta_path = os.path.join(product_dir, "metadata.json")
+        if not os.path.exists(meta_path):
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        parent_rel, parent_abs, parent_entry = normalize_generated_image_path(
+            metadata,
+            product_dir,
+            req.generated_image,
+        )
+
+        model_settings = resolve_fal_image_settings(req.model_key)
+        thinking_level = (req.thinking_level or "").strip().lower()
+        if not model_settings.get("supports_thinking") or thinking_level not in model_settings.get("thinking_levels", []):
+            thinking_level = ""
+
+        reference_rel = ""
+        reference_abs = ""
+        reference_image_used = False
+        reference_image_ignored = False
+        if req.reference_image:
+            reference_rel, reference_abs = normalize_product_image_path(product_dir, req.reference_image)
+
+        reference_images = [parent_abs]
+        if reference_abs:
+            if model_settings.get("input_image_list"):
+                reference_images.append(reference_abs)
+                reference_image_used = True
+            else:
+                reference_image_ignored = True
+
+        client = get_genai_client()
+        visual_details = generate_image_prompt_details(parent_abs, client)
+        prompt_mode = "custom" if req.prompt_mode == "custom" and req.prompt.strip() else "preset"
+        task = {
+            "prompt_mode": prompt_mode,
+            "prompt_preset": req.prompt_preset or DEFAULT_IMAGE_PROMPT_PRESET,
+            "prompt": req.prompt or "",
+        }
+        base_prompt = resolve_image_task_prompt(task, metadata, visual_details)
+        reference_note = (
+            "If a second reference image is provided, use it only to preserve the original product identity, "
+            "shape, materials, colors, and important product details."
+            if len(reference_images) > 1
+            else "Use the selected generated image as the edit target and preserve the product identity."
+        )
+        final_prompt = (
+            "Edit the selected generated product image into a refined final listing image. "
+            "Keep the useful composition from the selected generated image unless the instruction asks for a scene change. "
+            f"{reference_note} "
+            f"{base_prompt}"
+        )
+
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prompt_label = task["prompt_preset"] if prompt_mode == "preset" else "custom"
+        prompt_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", prompt_label).strip("_")[:18] or "prompt"
+        out_filename = f"tweak_{run_stamp}_{uuid.uuid4().hex[:8]}_{prompt_slug}.png"
+        out_path = os.path.join(product_dir, out_filename)
+
+        res_path = generate_image_with_imagen(
+            prompt=final_prompt,
+            output_path=out_path,
+            client=client,
+            reference_image=parent_abs,
+            reference_images=reference_images,
+            fal_model_key=model_settings["model_key"],
+            fal_thinking_level=thinking_level,
+        )
+
+        if not res_path:
+            raise HTTPException(status_code=500, detail="Image tweak generation failed")
+
+        generated_images = metadata.get("generated_images") or []
+        if not isinstance(generated_images, list):
+            generated_images = []
+
+        source_label = ""
+        if isinstance(parent_entry, dict):
+            source_label = parent_entry.get("source_label") or parent_entry.get("prompt_preset") or "generated image"
+
+        new_entry = {
+            "local_path": out_filename,
+            "is_tweak": True,
+            "parent_image": parent_rel,
+            "reference_image": reference_rel,
+            "reference_image_used": reference_image_used,
+            "reference_image_ignored": reference_image_ignored,
+            "source_image": parent_rel,
+            "source_folder": "generated_images",
+            "source_label": f"Tweak of {source_label}" if source_label else "Tweaked image",
+            "prompt_mode": prompt_mode,
+            "prompt_preset": task["prompt_preset"] if prompt_mode == "preset" else "",
+            "custom_prompt": req.prompt or "",
+            "model_key": model_settings["model_key"],
+            "thinking_level": thinking_level or "off",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        generated_images.append(new_entry)
+        metadata["generated_images"] = generated_images
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=4, ensure_ascii=False)
+
+        streamer.publish({"status": "queue_updated"}, user_token)
+        return {
+            "status": "success",
+            "generated_image": new_entry,
+            "generated_images": generated_images,
+            "reference_image_ignored": reference_image_ignored,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ExportZipRequest(BaseModel):
     product_slugs: list
@@ -1499,6 +1896,7 @@ def save_listing(req: ListingSaveRequest, user_token: str = Depends(get_user_tok
             metadata["etsy_listing"] = {}
             
         metadata["etsy_listing"]["title"] = req.title
+        metadata["etsy_listing"]["category"] = req.category
         metadata["etsy_listing"]["suggested_price"] = req.suggested_price
         metadata["etsy_listing"]["description"] = req.description
         metadata["etsy_listing"]["tags"] = req.tags
@@ -1547,6 +1945,7 @@ def get_image_generation_options():
                 "thinking_levels": config.get("thinking_levels", []),
                 "description": config.get("description", ""),
                 "recommended_for": config.get("recommended_for", ""),
+                "input_image_list": config.get("input_image_list", False),
             }
             for key, config in FAL_IMAGE_MODELS.items()
         ],

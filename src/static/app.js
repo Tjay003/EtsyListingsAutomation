@@ -37,9 +37,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const imageTasksList = document.getElementById("image-tasks-list");
     const btnAddTask = document.getElementById("btn-add-task");
     const btnGenerate = document.getElementById("btn-generate");
+    const btnCancelPipeline = document.getElementById("btn-cancel-pipeline");
 
     const consoleLogs = document.getElementById("console-logs");
     const workspace = document.getElementById("listing-workspace");
+    const btnTweakCopy = document.getElementById("btn-tweak-copy");
     const btnSave = document.getElementById("btn-save");
 
     const etsyTitle = document.getElementById("etsy-title");
@@ -86,8 +88,19 @@ document.addEventListener("DOMContentLoaded", () => {
     let activeListing = null;
     let isBulkRunning = false;
     let pipelineRunning = false;
+    let bulkCancelRequested = false;
+    let currentPipelineSlug = "";
     let userToken = localStorage.getItem("userToken") || "";
     let browserNotificationRequested = false;
+    let activeTweakPreset = "fix_title";
+    let imageTweakState = {
+        item: null,
+        imageEntry: null,
+        imagePath: "",
+        referencePath: "",
+        previewContainer: null
+    };
+    const imageTweakingKeys = new Set();
 
     const modal = document.getElementById("app-modal");
     const modalTitle = document.getElementById("modal-title");
@@ -98,6 +111,30 @@ document.addEventListener("DOMContentLoaded", () => {
     const modalClose = document.getElementById("modal-close");
     const modalCancel = document.getElementById("modal-cancel");
     const modalConfirm = document.getElementById("modal-confirm");
+
+    const tweakModal = document.getElementById("tweak-modal");
+    const tweakModalClose = document.getElementById("tweak-modal-close");
+    const tweakModalCancel = document.getElementById("tweak-modal-cancel");
+    const tweakModalRun = document.getElementById("tweak-modal-run");
+    const tweakPresetGrid = document.getElementById("tweak-preset-grid");
+    const tweakInstruction = document.getElementById("tweak-instruction");
+    const tweakFieldInputs = document.querySelectorAll(".tweak-field");
+
+    const imageTweakModal = document.getElementById("image-tweak-modal");
+    const imageTweakModalClose = document.getElementById("image-tweak-modal-close");
+    const imageTweakModalCancel = document.getElementById("image-tweak-modal-cancel");
+    const imageTweakModalRun = document.getElementById("image-tweak-modal-run");
+    const imageTweakPreviewImg = document.getElementById("image-tweak-preview-img");
+    const imageTweakModelSelect = document.getElementById("image-tweak-model-select");
+    const imageTweakThinkingSelect = document.getElementById("image-tweak-thinking-select");
+    const imageTweakPromptMode = document.getElementById("image-tweak-prompt-mode");
+    const imageTweakPresetGroup = document.getElementById("image-tweak-preset-group");
+    const imageTweakPresetSelect = document.getElementById("image-tweak-preset-select");
+    const imageTweakPresetHint = document.getElementById("image-tweak-preset-hint");
+    const imageTweakCustomGroup = document.getElementById("image-tweak-custom-group");
+    const imageTweakInstruction = document.getElementById("image-tweak-instruction");
+    const imageTweakReferenceGrid = document.getElementById("image-tweak-reference-grid");
+    const imageTweakReferenceHint = document.getElementById("image-tweak-reference-hint");
 
     function openModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false, input = null, hideCancel = false, blocking = false }) {
         return new Promise(resolve => {
@@ -287,6 +324,145 @@ document.addEventListener("DOMContentLoaded", () => {
         return `${finalUrl.pathname}${finalUrl.search}${finalUrl.hash}`;
     }
 
+    function setTweakFields(fields) {
+        const selected = new Set(fields || []);
+        tweakFieldInputs.forEach(input => {
+            input.checked = selected.has(input.value);
+        });
+    }
+
+    function getSelectedTweakFields() {
+        return Array.from(tweakFieldInputs)
+            .filter(input => input.checked)
+            .map(input => input.value);
+    }
+
+    function selectTweakPreset(button) {
+        if (!button) return;
+        activeTweakPreset = button.dataset.presetKey || "custom";
+        tweakPresetGrid.querySelectorAll(".tweak-preset-btn").forEach(btn => {
+            btn.classList.toggle("selected", btn === button);
+        });
+        const fields = (button.dataset.fields || "")
+            .split(",")
+            .map(field => field.trim())
+            .filter(Boolean);
+        setTweakFields(fields.length ? fields : ["title", "category", "description", "tags"]);
+        if (activeTweakPreset === "custom" && tweakInstruction) {
+            setTimeout(() => tweakInstruction.focus(), 0);
+        }
+    }
+
+    function getEditorListingSnapshot() {
+        const currentTags = activeListing && Array.isArray(activeListing.tags) ? activeListing.tags : [];
+        return {
+            ...(activeListing || {}),
+            title: etsyTitle.value || "",
+            category: etsyCategory ? etsyCategory.value || "" : "",
+            suggested_price: etsyPrice.value || "",
+            description: etsyDesc.value || "",
+            tags: currentTags
+        };
+    }
+
+    function applyTweakedListingToEditor(listing) {
+        if (!listing || !activeListing) return;
+        activeListing = {
+            ...activeListing,
+            ...listing,
+            slug: activeListing.slug
+        };
+        populateWorkspace();
+        workspace.classList.add("has-unsaved-tweak");
+        btnSave.textContent = "Save Tweaked Copy";
+        btnSave.disabled = false;
+        logConsole("success", "AI copy tweak generated. Review it, then click Save Updates when ready.");
+        notifyPipeline({
+            title: "Copy Tweak Ready",
+            message: "The editor has been updated, but the listing is not saved yet.",
+            type: "success",
+            browser: false
+        });
+    }
+
+    function openTweakCopyModal() {
+        if (!activeListing || !activeListing.slug) {
+            showInfoModal("No Listing Selected", "Select a completed listing before tweaking copy.");
+            return;
+        }
+        tweakModal.hidden = false;
+        const selectedButton = tweakPresetGrid.querySelector(".tweak-preset-btn.selected") || tweakPresetGrid.querySelector(".tweak-preset-btn");
+        selectTweakPreset(selectedButton);
+        setTimeout(() => tweakModalRun.focus(), 0);
+    }
+
+    function closeTweakCopyModal() {
+        tweakModal.hidden = true;
+    }
+
+    async function runCopyTweak() {
+        if (!activeListing || !activeListing.slug) return;
+        const fields = getSelectedTweakFields();
+        if (fields.length === 0) {
+            await showInfoModal("Choose Fields", "Select at least one field to update.");
+            return;
+        }
+
+        const previousText = tweakModalRun.textContent;
+        tweakModalRun.disabled = true;
+        tweakModalRun.textContent = "Generating...";
+
+        try {
+            const res = await apiFetch("/api/tweak-listing", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    output_dir_name: activeListing.slug,
+                    preset_key: activeTweakPreset,
+                    instruction: tweakInstruction.value.trim(),
+                    fields,
+                    context_mode: "existing_output",
+                    current_listing: getEditorListingSnapshot()
+                })
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(payload.detail || payload.message || "Copy tweak failed");
+            }
+            applyTweakedListingToEditor(payload.listing);
+            closeTweakCopyModal();
+        } catch (err) {
+            logConsole("error", err.message);
+            await showInfoModal("Copy Tweak Failed", err.message);
+        } finally {
+            tweakModalRun.disabled = false;
+            tweakModalRun.textContent = previousText;
+        }
+    }
+
+    if (tweakPresetGrid) {
+        tweakPresetGrid.addEventListener("click", (event) => {
+            const button = event.target.closest(".tweak-preset-btn");
+            if (button) selectTweakPreset(button);
+        });
+    }
+
+    if (btnTweakCopy) {
+        btnTweakCopy.addEventListener("click", openTweakCopyModal);
+    }
+
+    if (tweakModalClose) tweakModalClose.addEventListener("click", closeTweakCopyModal);
+    if (tweakModalCancel) tweakModalCancel.addEventListener("click", closeTweakCopyModal);
+    if (tweakModalRun) tweakModalRun.addEventListener("click", runCopyTweak);
+    if (tweakModal) {
+        tweakModal.addEventListener("click", (event) => {
+            if (event.target === tweakModal) closeTweakCopyModal();
+        });
+        document.addEventListener("keydown", (event) => {
+            if (!tweakModal.hidden && event.key === "Escape") closeTweakCopyModal();
+        });
+    }
+
     async function promptForWorkspaceToken(initialValue = "", forcePrompt = false) {
         let nextToken = forcePrompt ? "" : sanitizeWorkspaceToken(initialValue || userToken);
         while (!nextToken) {
@@ -319,7 +495,10 @@ document.addEventListener("DOMContentLoaded", () => {
         wsProductTitle.value = "";
         wsProductSlug.value = "";
         btnGenerate.disabled = true;
+        if (btnTweakCopy) btnTweakCopy.disabled = true;
+        btnSave.textContent = "Save Updates";
         workspace.classList.add("disabled");
+        workspace.classList.remove("has-unsaved-tweak");
         etsyTitle.value = "";
         if (etsyCategory) etsyCategory.value = "";
         etsyPrice.value = "";
@@ -374,9 +553,25 @@ document.addEventListener("DOMContentLoaded", () => {
         consoleLogs.innerHTML = "";
     });
 
-    function setActivityDot(running) {
+    function setActivityDot(running, slug = "") {
         pipelineRunning = running;
+        if (running) {
+            currentPipelineSlug = slug || currentPipelineSlug || wsProductSlug.value || "";
+        } else {
+            currentPipelineSlug = "";
+            bulkCancelRequested = false;
+        }
         consoleActivityDot.classList.toggle("running", running);
+        if (btnCancelPipeline) {
+            btnCancelPipeline.hidden = !running;
+            btnCancelPipeline.disabled = !running || !currentPipelineSlug;
+            if (!running) {
+                btnCancelPipeline.textContent = "Stop Pipeline";
+            }
+        }
+        if (btnGenerate) {
+            btnGenerate.disabled = running || !wsProductSlug.value;
+        }
     }
 
     // --- NAVIGATION ---
@@ -612,6 +807,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return Boolean(getImageModelOption(key)?.supports_thinking);
     }
 
+    function supportsMultipleReferenceImages(key) {
+        return Boolean(getImageModelOption(key)?.input_image_list);
+    }
+
     function buildModelOptions(selectedKey = "", includeInherit = false) {
         const options = [];
         if (includeInherit) {
@@ -675,6 +874,253 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function getPromptPresetDescription(key) {
         return imagePromptPresets.find(preset => preset.key === key)?.description || "";
+    }
+
+    function syncImageTweakPromptUI() {
+        if (!imageTweakPromptMode || !imageTweakPresetGroup || !imageTweakCustomGroup) return;
+        const isPreset = imageTweakPromptMode.value === "preset";
+        imageTweakPresetGroup.hidden = !isPreset;
+        imageTweakCustomGroup.hidden = isPreset;
+        if (imageTweakPresetHint && imageTweakPresetSelect) {
+            imageTweakPresetHint.textContent = getPromptPresetDescription(imageTweakPresetSelect.value);
+        }
+    }
+
+    function syncImageTweakModelUI() {
+        if (!imageTweakModelSelect || !imageTweakThinkingSelect || !imageTweakReferenceHint) return;
+        const modelKey = imageTweakModelSelect.value || defaultImageSettings.model_key;
+        const supportsThinking = supportsModelThinking(modelKey);
+        const supportsMultiRef = supportsMultipleReferenceImages(modelKey);
+        imageTweakThinkingSelect.disabled = !supportsThinking;
+        imageTweakThinkingSelect.closest(".input-group")?.classList.toggle("is-muted", !supportsThinking);
+        if (!supportsThinking) {
+            imageTweakThinkingSelect.value = "off";
+        }
+
+        if (imageTweakState.referencePath && !supportsMultiRef) {
+            imageTweakReferenceHint.textContent = "This model only accepts one image, so the extra product reference will be ignored. Use Nano Banana 2 Edit to send both.";
+        } else if (imageTweakState.referencePath && supportsMultiRef) {
+            imageTweakReferenceHint.textContent = "The selected generated image and this product reference will both be sent to the model.";
+        } else {
+            imageTweakReferenceHint.textContent = "Choose an original product image if you want extra product-accuracy guidance.";
+        }
+    }
+
+    function populateImageTweakControls() {
+        if (imageTweakModelSelect) {
+            imageTweakModelSelect.innerHTML = buildModelOptions(defaultImageSettings.model_key, false);
+            imageTweakModelSelect.value = defaultImageSettings.model_key;
+        }
+        if (imageTweakThinkingSelect) {
+            imageTweakThinkingSelect.innerHTML = buildThinkingLevelOptions(defaultImageSettings.thinking_level, false);
+            imageTweakThinkingSelect.value = defaultImageSettings.thinking_level;
+        }
+        if (imageTweakPresetSelect) {
+            imageTweakPresetSelect.innerHTML = buildPromptPresetOptions(defaultPromptPreset);
+            imageTweakPresetSelect.value = defaultPromptPreset;
+        }
+        if (imageTweakPromptMode) {
+            imageTweakPromptMode.value = "preset";
+        }
+        if (imageTweakInstruction) {
+            imageTweakInstruction.value = "";
+        }
+        syncImageTweakPromptUI();
+        syncImageTweakModelUI();
+    }
+
+    function renderImageTweakReferenceGrid(item) {
+        if (!imageTweakReferenceGrid) return;
+        imageTweakReferenceGrid.innerHTML = "";
+
+        const noneButton = document.createElement("button");
+        noneButton.type = "button";
+        noneButton.className = `reference-image-card ${!imageTweakState.referencePath ? "selected" : ""}`;
+        noneButton.innerHTML = `
+            <div class="image-tweak-no-reference">No extra reference</div>
+            <span class="reference-selected-badge">Selected</span>
+        `;
+        noneButton.addEventListener("click", () => {
+            imageTweakState.referencePath = "";
+            renderImageTweakReferenceGrid(item);
+            syncImageTweakModelUI();
+        });
+        imageTweakReferenceGrid.appendChild(noneButton);
+
+        const candidates = collectReferenceCandidates(item);
+        candidates.forEach(candidate => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `reference-image-card ${imageTweakState.referencePath === candidate.local_path ? "selected" : ""}`;
+
+            const sourcePill = document.createElement("span");
+            sourcePill.className = "reference-source-pill";
+            sourcePill.textContent = `${candidate.source_label} ${candidate.index}`;
+
+            const img = document.createElement("img");
+            img.src = getProductImageSrc(item.slug, candidate.local_path);
+            img.alt = candidate.label;
+            img.loading = "lazy";
+
+            const label = document.createElement("span");
+            label.className = "reference-card-label";
+            label.textContent = candidate.label;
+
+            const selectedBadge = document.createElement("span");
+            selectedBadge.className = "reference-selected-badge";
+            selectedBadge.textContent = "Selected";
+
+            button.appendChild(sourcePill);
+            button.appendChild(img);
+            button.appendChild(label);
+            button.appendChild(selectedBadge);
+            button.addEventListener("click", () => {
+                imageTweakState.referencePath = candidate.local_path;
+                renderImageTweakReferenceGrid(item);
+                syncImageTweakModelUI();
+            });
+            imageTweakReferenceGrid.appendChild(button);
+        });
+    }
+
+    function openGeneratedImageTweakModal(item, imageEntry, previewContainer = null) {
+        const imagePath = getImagePath(imageEntry);
+        if (!item?.slug || !imagePath) {
+            showInfoModal("No Image Selected", "Choose a generated image before tweaking.");
+            return;
+        }
+
+        imageTweakState = {
+            item,
+            imageEntry,
+            imagePath,
+            referencePath: "",
+            previewContainer
+        };
+        populateImageTweakControls();
+        if (imageTweakPreviewImg) {
+            imageTweakPreviewImg.src = getProductImageSrc(item.slug, imagePath, true);
+        }
+        renderImageTweakReferenceGrid(item);
+        imageTweakModal.hidden = false;
+        setTimeout(() => imageTweakModalRun?.focus(), 0);
+    }
+
+    function closeGeneratedImageTweakModal() {
+        if (imageTweakModal) imageTweakModal.hidden = true;
+    }
+
+    function applyGeneratedImageTweakResult(slug, generatedImages) {
+        const product = queueData.find(item => item.slug === slug) || imageTweakState.item;
+        if (product) {
+            product.generated_images = generatedImages;
+        }
+        if (selectedQueueItem?.slug === slug) {
+            selectedQueueItem.generated_images = generatedImages;
+            renderGeneratedImages(generatedImages, slug);
+        }
+        if (imageTweakState.item?.slug === slug) {
+            imageTweakState.item.generated_images = generatedImages;
+        }
+        if (imageTweakState.previewContainer && imageTweakState.item) {
+            renderPreviewGeneratedImages(imageTweakState.previewContainer, generatedImages, slug, imageTweakState.item);
+        }
+    }
+
+    function getImageTweakKey(slug, imagePath) {
+        return `${slug || ""}::${imagePath || ""}`;
+    }
+
+    function isImageTweaking(slug, imagePath) {
+        return imageTweakingKeys.has(getImageTweakKey(slug, imagePath));
+    }
+
+    function refreshGeneratedImageDisplays(slug) {
+        const product = queueData.find(item => item.slug === slug) || imageTweakState.item;
+        const generatedImages = product?.generated_images || imageTweakState.item?.generated_images || [];
+        if (selectedQueueItem?.slug === slug) {
+            renderGeneratedImages(generatedImages, slug);
+        }
+        if (imageTweakState.previewContainer && imageTweakState.item?.slug === slug) {
+            renderPreviewGeneratedImages(imageTweakState.previewContainer, generatedImages, slug, imageTweakState.item);
+        }
+    }
+
+    async function runGeneratedImageTweak() {
+        const item = imageTweakState.item;
+        if (!item?.slug || !imageTweakState.imagePath) return;
+
+        const promptMode = imageTweakPromptMode ? imageTweakPromptMode.value : "preset";
+        const customPrompt = imageTweakInstruction ? imageTweakInstruction.value.trim() : "";
+        if (promptMode === "custom" && !customPrompt) {
+            await showInfoModal("Custom Prompt Needed", "Write a custom instruction or switch back to Preset.");
+            return;
+        }
+
+        const previousText = imageTweakModalRun.textContent;
+        const tweakKey = getImageTweakKey(item.slug, imageTweakState.imagePath);
+        const modelLabel = getImageModelOption(imageTweakModelSelect ? imageTweakModelSelect.value : defaultImageSettings.model_key)?.label || "selected model";
+        imageTweakingKeys.add(tweakKey);
+        refreshGeneratedImageDisplays(item.slug);
+        logConsole("progress", `Tweaking generated image ${imageTweakState.imagePath} for ${item.slug} with ${modelLabel}...`);
+        imageTweakModalRun.disabled = true;
+        imageTweakModalRun.textContent = "Generating...";
+
+        try {
+            const res = await apiFetch("/api/tweak-generated-image", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    product_slug: item.slug,
+                    generated_image: imageTweakState.imagePath,
+                    reference_image: imageTweakState.referencePath,
+                    prompt_mode: promptMode,
+                    prompt_preset: imageTweakPresetSelect ? imageTweakPresetSelect.value : defaultPromptPreset,
+                    prompt: customPrompt,
+                    model_key: imageTweakModelSelect ? imageTweakModelSelect.value : defaultImageSettings.model_key,
+                    thinking_level: imageTweakThinkingSelect ? imageTweakThinkingSelect.value : "off"
+                })
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(payload.detail || payload.message || "Image tweak failed");
+            }
+
+            applyGeneratedImageTweakResult(item.slug, payload.generated_images || []);
+            closeGeneratedImageTweakModal();
+            logConsole("success", `Image tweak finished for ${item.slug}. Added ${payload.generated_image?.local_path || "new generated image"}.`);
+            notifyPipeline({
+                title: "Image Tweak Finished",
+                message: payload.reference_image_ignored
+                    ? "Created a new tweaked image. Extra product reference was ignored by this model."
+                    : "Created a new tweaked image and added it to this listing.",
+                type: "success",
+                browser: false
+            });
+        } catch (err) {
+            logConsole("error", err.message);
+            await showInfoModal("Image Tweak Failed", err.message);
+        } finally {
+            imageTweakingKeys.delete(tweakKey);
+            refreshGeneratedImageDisplays(item.slug);
+            imageTweakModalRun.disabled = false;
+            imageTweakModalRun.textContent = previousText;
+        }
+    }
+
+    if (imageTweakPromptMode) imageTweakPromptMode.addEventListener("change", syncImageTweakPromptUI);
+    if (imageTweakPresetSelect) imageTweakPresetSelect.addEventListener("change", syncImageTweakPromptUI);
+    if (imageTweakModelSelect) imageTweakModelSelect.addEventListener("change", syncImageTweakModelUI);
+    if (imageTweakModalClose) imageTweakModalClose.addEventListener("click", closeGeneratedImageTweakModal);
+    if (imageTweakModalCancel) imageTweakModalCancel.addEventListener("click", closeGeneratedImageTweakModal);
+    if (imageTweakModalRun) imageTweakModalRun.addEventListener("click", runGeneratedImageTweak);
+    if (imageTweakModal) {
+        imageTweakModal.addEventListener("click", (event) => {
+            if (event.target === imageTweakModal) closeGeneratedImageTweakModal();
+        });
+        document.addEventListener("keydown", (event) => {
+            if (!imageTweakModal.hidden && event.key === "Escape") closeGeneratedImageTweakModal();
+        });
     }
 
     function applyGenerationPreset(presetName) {
@@ -1260,7 +1706,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return "";
     }
 
-    function renderPreviewGeneratedImages(container, images, slug) {
+    function renderPreviewGeneratedImages(container, images, slug, item = null) {
         container.innerHTML = "";
 
         const generatedEntries = (Array.isArray(images) ? images : [])
@@ -1275,31 +1721,52 @@ document.addEventListener("DOMContentLoaded", () => {
         generatedEntries.forEach(({ entry, imagePath }, index) => {
             const sourceLabel = getGeneratedSourceLabel(entry);
             const src = getProductImageSrc(slug, imagePath, true);
-            const link = document.createElement("a");
-            link.className = "preview-generated-tile";
-            link.href = src;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            link.title = `Open generated image ${index + 1}`;
+            const busy = isImageTweaking(slug, imagePath);
+            const tile = document.createElement("div");
+            tile.className = `preview-generated-tile ${busy ? "is-tweaking" : ""}`;
+            tile.title = `Generated image ${index + 1}`;
 
             const img = document.createElement("img");
             img.src = src;
             img.alt = `Generated image ${index + 1}`;
             img.loading = "lazy";
+            img.addEventListener("click", () => {
+                window.open(src, "_blank", "noopener,noreferrer");
+            });
 
             const badge = document.createElement("span");
             badge.className = "preview-generated-badge";
             badge.textContent = `${index + 1}`;
 
-            link.appendChild(img);
-            link.appendChild(badge);
+            const tweakBtn = document.createElement("button");
+            tweakBtn.type = "button";
+            tweakBtn.className = "generated-tweak-btn";
+            tweakBtn.textContent = busy ? "Tweaking..." : "Tweak";
+            tweakBtn.disabled = busy;
+            tweakBtn.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (busy) return;
+                const product = item || queueData.find(q => q.slug === slug);
+                openGeneratedImageTweakModal(product, entry, container);
+            });
+
+            tile.appendChild(img);
+            tile.appendChild(badge);
+            tile.appendChild(tweakBtn);
+            if (busy) {
+                const status = document.createElement("span");
+                status.className = "generated-tweak-status";
+                status.textContent = "Tweaking image...";
+                tile.appendChild(status);
+            }
             if (sourceLabel) {
                 const source = document.createElement("span");
                 source.className = "preview-generated-source";
                 source.textContent = sourceLabel;
-                link.appendChild(source);
+                tile.appendChild(source);
             }
-            container.appendChild(link);
+            container.appendChild(tile);
         });
     }
 
@@ -1539,6 +2006,9 @@ document.addEventListener("DOMContentLoaded", () => {
             : `<span class="preview-value" style="color:var(--neutral-grey)">—</span>`;
 
         panel.innerHTML = `
+            <div class="preview-action-row">
+                <button type="button" class="secondary-btn preview-tweak-btn" data-action="tweak-copy">Tweak Copy</button>
+            </div>
             <div class="preview-grid-top">
                 <div class="preview-left-col">
                     <div class="preview-field">
@@ -1611,8 +2081,18 @@ document.addEventListener("DOMContentLoaded", () => {
         renderPreviewGeneratedImages(
             panel.querySelector("[data-generated-images]"),
             generatedImages,
-            item.slug
+            item.slug,
+            item
         );
+
+        const tweakBtn = panel.querySelector("[data-action='tweak-copy']");
+        if (tweakBtn) {
+            tweakBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                selectForWorkspace(item);
+                openTweakCopyModal();
+            });
+        }
 
         // Wire up copy event listeners
         panel.querySelectorAll(".copy-btn").forEach(btn => {
@@ -1705,6 +2185,61 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    async function requestPipelineCancel(slug) {
+        if (!slug) return;
+        if (isBulkRunning) {
+            bulkCancelRequested = true;
+        }
+        if (btnCancelPipeline) {
+            btnCancelPipeline.disabled = true;
+            btnCancelPipeline.textContent = "Stopping...";
+        }
+
+        const res = await apiFetch("/api/cancel-pipeline", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ product_slug: slug })
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(payload.detail || payload.message || "Cancel request failed");
+        }
+        logConsole("system", payload.message || `Cancel requested for ${slug}.`);
+        notifyPipeline({
+            title: payload.status === "idle" ? "No Active Pipeline" : "Stopping Pipeline",
+            message: payload.message || "Waiting for the current API call to finish safely.",
+            type: payload.status === "idle" ? "info" : "info"
+        });
+    }
+
+    if (btnCancelPipeline) {
+        btnCancelPipeline.addEventListener("click", async () => {
+            const slug = currentPipelineSlug || wsProductSlug.value;
+            if (!slug) return;
+            const confirmed = await openModal({
+                title: "Stop Pipeline",
+                message: "Stop this pipeline after the current API call finishes? Partial outputs that already saved will stay in the product folder.",
+                confirmText: "Stop Pipeline",
+                danger: true
+            });
+            if (!confirmed) return;
+            try {
+                await requestPipelineCancel(slug);
+            } catch (err) {
+                logConsole("error", err.message);
+                notifyPipeline({
+                    title: "Cancel Failed",
+                    message: err.message,
+                    type: "error"
+                });
+                if (btnCancelPipeline && pipelineRunning) {
+                    btnCancelPipeline.disabled = false;
+                    btnCancelPipeline.textContent = "Stop Pipeline";
+                }
+            }
+        });
+    }
+
     // --- BULK RUN LISTINGS ---
     btnRunSelected.addEventListener("click", async () => {
         const checked = Array.from(document.querySelectorAll(".queue-chk:checked"))
@@ -1714,6 +2249,8 @@ document.addEventListener("DOMContentLoaded", () => {
         requestBrowserNotificationPermission();
 
         isBulkRunning = true;
+        bulkCancelRequested = false;
+        let processedCount = 0;
         btnRunSelected.disabled = true;
         btnRunSelected.textContent = `Running 0/${checked.length}...`;
 
@@ -1721,7 +2258,10 @@ document.addEventListener("DOMContentLoaded", () => {
         navBtns[1].click();
 
         for (let i = 0; i < checked.length; i++) {
+            if (bulkCancelRequested) break;
             const slug = checked[i].dataset.slug;
+            currentPipelineSlug = slug;
+            setActivityDot(true, slug);
             btnRunSelected.textContent = `Running ${i + 1}/${checked.length}...`;
             logConsole("system", `Bulk run: Starting ${slug} (${i + 1}/${checked.length})`);
 
@@ -1739,24 +2279,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 // Wait for the SSE "done" or "error" event for this slug before continuing
                 await waitForPipelineCompletion(slug);
+                processedCount++;
             } catch (err) {
                 logConsole("error", `Bulk run error on ${slug}: ${err.message}`);
                 notifyPipeline({
-                    title: "Bulk Run Paused",
+                    title: err.cancelled ? "Bulk Run Stopped" : "Bulk Run Paused",
                     message: err.message,
-                    type: "error"
+                    type: err.cancelled ? "info" : "error"
                 });
                 break;
             }
         }
 
-        logConsole("success", `Bulk run complete. Processed ${checked.length} listing(s).`);
+        const stopped = bulkCancelRequested;
+        logConsole(stopped ? "system" : "success", `${stopped ? "Bulk run stopped" : "Bulk run complete"}. Processed ${processedCount}/${checked.length} listing(s).`);
         notifyPipeline({
-            title: "Bulk Run Finished",
-            message: `Processed ${checked.length} listing(s).`,
-            type: "success"
+            title: stopped ? "Bulk Run Stopped" : "Bulk Run Finished",
+            message: `Processed ${processedCount}/${checked.length} listing(s).`,
+            type: stopped ? "info" : "success"
         });
         isBulkRunning = false;
+        bulkCancelRequested = false;
+        setActivityDot(false);
         btnRunSelected.textContent = "Run Listings";
         loadQueue();
     });
@@ -1785,13 +2329,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     const res = await apiFetch("/api/queue");
                     const data = await res.json();
                     const item = (data.queue || []).find(q => q.slug === slug);
-                    if (item && item.status !== "processing" && item.status !== "queued") {
+                    if (item && !["processing", "queued", "cancelling"].includes(item.status)) {
                         clearInterval(poll);
                         clearTimeout(timer);
                         if (!resolved) {
                             resolved = true;
                             if (item.status === "failed") {
                                 reject(new Error(item.error || `${slug} failed.`));
+                            } else if (item.status === "cancelled") {
+                                const err = new Error(`${slug} was cancelled.`);
+                                err.cancelled = true;
+                                reject(err);
                             } else {
                                 resolve();
                             }
@@ -1826,11 +2374,14 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (item.status === "done" && item.generated_images) {
             activeListing = null;
             workspace.classList.add("disabled");
+            workspace.classList.remove("has-unsaved-tweak");
             etsyTitle.value = "";
             etsyPrice.value = "";
             etsyDesc.value = "";
             tagsContainer.innerHTML = "";
             btnSave.disabled = true;
+            btnSave.textContent = "Save Updates";
+            if (btnTweakCopy) btnTweakCopy.disabled = true;
             variationsSpecsWrapper.style.display = "none";
             variationsSpecsList.innerHTML = "";
             renderGeneratedImages(item.generated_images, item.slug);
@@ -1838,12 +2389,15 @@ document.addEventListener("DOMContentLoaded", () => {
             // Reset workspace
             activeListing = null;
             workspace.classList.add("disabled");
+            workspace.classList.remove("has-unsaved-tweak");
             etsyTitle.value = "";
             etsyPrice.value = "";
             etsyDesc.value = "";
             tagsContainer.innerHTML = "";
             imagesGrid.innerHTML = `<div class="image-placeholder">Run pipeline to generate images.</div>`;
             btnSave.disabled = true;
+            btnSave.textContent = "Save Updates";
+            if (btnTweakCopy) btnTweakCopy.disabled = true;
             variationsSpecsWrapper.style.display = "none";
             variationsSpecsList.innerHTML = "";
         }
@@ -1856,6 +2410,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         logConsole("system", `Triggering pipeline for ${slug}...`);
         btnGenerate.disabled = true;
+        currentPipelineSlug = slug;
+        setActivityDot(true, slug);
 
         apiFetch("/api/run-pipeline", {
             method: "POST",
@@ -1867,6 +2423,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 image_settings: getImageSettings(),
                 copywriting_options: getCopywritingOptions()
             })
+        }).then(async res => {
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                throw new Error(payload.detail || payload.message || "Pipeline start failed");
+            }
+        }).catch(err => {
+            logConsole("error", err.message);
+            notifyPipeline({
+                title: "Pipeline Start Failed",
+                message: err.message,
+                type: "error"
+            });
+            setActivityDot(false);
         });
     });
 
@@ -1881,7 +2450,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = JSON.parse(e.data);
             if (data.status === "progress") {
                 logConsole("progress", data.message);
-                setActivityDot(true);
+                setActivityDot(true, data.slug || data.output_dir_name || currentPipelineSlug);
             } else if (data.status === "error") {
                 logConsole("error", data.message);
                 notifyPipeline({
@@ -1891,6 +2460,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 btnGenerate.disabled = false;
                 setActivityDot(false);
+            } else if (data.status === "cancelled") {
+                logConsole("system", data.message || "Pipeline cancelled.");
+                notifyPipeline({
+                    title: data.title || "Pipeline Cancelled",
+                    message: data.message || "The pipeline was stopped.",
+                    type: "info"
+                });
+                btnGenerate.disabled = false;
+                setActivityDot(false);
+                loadQueue();
             } else if (data.status === "done") {
                 logConsole("success", data.message);
                 notifyPipeline({
@@ -1947,7 +2526,10 @@ document.addEventListener("DOMContentLoaded", () => {
     function populateWorkspace() {
         if (!activeListing) return;
         workspace.classList.remove("disabled");
+        workspace.classList.remove("has-unsaved-tweak");
         btnSave.disabled = false;
+        btnSave.textContent = "Save Updates";
+        if (btnTweakCopy) btnTweakCopy.disabled = false;
 
         etsyTitle.value = activeListing.title || "";
         if (etsyCategory) {
@@ -2030,9 +2612,19 @@ document.addEventListener("DOMContentLoaded", () => {
             const imagePath = getImagePath(imgFile);
             if (!imagePath) return;
             const sourceLabel = getGeneratedSourceLabel(imgFile);
+            const busy = isImageTweaking(slug, imagePath);
+            const item = selectedQueueItem?.slug === slug
+                ? selectedQueueItem
+                : (queueData.find(q => q.slug === slug) || {
+                    slug,
+                    generated_images: images,
+                    main_images: [],
+                    variation_images: [],
+                    description_images: []
+                });
 
             const card = document.createElement("div");
-            card.className = "prompt-card";
+            card.className = `prompt-card ${busy ? "is-tweaking" : ""}`;
 
             const imgWrap = document.createElement("div");
             imgWrap.className = "prompt-card-img-wrapper";
@@ -2041,6 +2633,22 @@ document.addEventListener("DOMContentLoaded", () => {
             img.style.display = "block";
             
             imgWrap.appendChild(img);
+            const tweakBtn = document.createElement("button");
+            tweakBtn.type = "button";
+            tweakBtn.className = "generated-tweak-btn prompt-card-tweak-btn";
+            tweakBtn.textContent = busy ? "Tweaking..." : "Tweak";
+            tweakBtn.disabled = busy;
+            tweakBtn.addEventListener("click", () => {
+                if (busy) return;
+                openGeneratedImageTweakModal(item, imgFile);
+            });
+            imgWrap.appendChild(tweakBtn);
+            if (busy) {
+                const status = document.createElement("span");
+                status.className = "generated-tweak-status";
+                status.textContent = "Tweaking image...";
+                imgWrap.appendChild(status);
+            }
             card.appendChild(imgWrap);
 
             if (sourceLabel) {
@@ -2114,8 +2722,18 @@ document.addEventListener("DOMContentLoaded", () => {
             btnSave.textContent = "Save Updates";
             btnSave.disabled = false;
             if (res.status === "success") {
+                workspace.classList.remove("has-unsaved-tweak");
+                btnSave.textContent = "Save Updates";
                 await showInfoModal("Listing Saved", "Saved updates to metadata.json.");
                 if (selectedQueueItem) {
+                    selectedQueueItem.etsy_listing = {
+                        ...(selectedQueueItem.etsy_listing || {}),
+                        ...activeListing,
+                        title: etsyTitle.value,
+                        category: etsyCategory ? etsyCategory.value : "",
+                        suggested_price: etsyPrice.value,
+                        description: etsyDesc.value
+                    };
                     selectedQueueItem.variation_images = updatedVars;
                 }
                 loadQueue();

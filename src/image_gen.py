@@ -65,7 +65,7 @@ def resolve_fal_image_settings(model_key=None):
         "recommended_for": model_config.get("recommended_for", ""),
     }
 
-def generate_image_with_fal(prompt, input_image_path, output_path, model_key=None, thinking_level=None):
+def generate_image_with_fal(prompt, input_image_path, output_path, model_key=None, thinking_level=None, input_image_paths=None):
     """Generate image-to-image using the configured Fal.ai model."""
     try:
         import fal_client
@@ -88,9 +88,18 @@ def generate_image_with_fal(prompt, input_image_path, output_path, model_key=Non
         settings = resolve_fal_image_settings(model_key)
         model = settings["model"]
         final_prompt = prompt
-        
-        print(f"Uploading reference image: {input_image_path} to Fal.ai...")
-        image_url = fal_client.upload_file(input_image_path)
+
+        reference_paths = input_image_paths or [input_image_path]
+        reference_paths = [path for path in reference_paths if path and os.path.exists(path)]
+        if not reference_paths:
+            print("No valid Fal.ai reference images were provided.")
+            return None
+
+        if not settings.get("input_image_list") and len(reference_paths) > 1:
+            reference_paths = reference_paths[:1]
+
+        print(f"Uploading {len(reference_paths)} reference image(s) to Fal.ai...")
+        image_urls = [fal_client.upload_file(path) for path in reference_paths]
         
         thinking_level = (thinking_level or "").strip().lower()
         active_thinking = ""
@@ -98,7 +107,7 @@ def generate_image_with_fal(prompt, input_image_path, output_path, model_key=Non
             active_thinking = thinking_level
 
         thinking_note = f" with {active_thinking} thinking" if active_thinking else ""
-        print(f"Generating Fal.ai img2img ({settings['label']}{thinking_note}) using reference URL: {image_url}...")
+        print(f"Generating Fal.ai img2img ({settings['label']}{thinking_note}) using {len(image_urls)} reference image(s)...")
         
         arguments = {
             "prompt": final_prompt,
@@ -107,9 +116,9 @@ def generate_image_with_fal(prompt, input_image_path, output_path, model_key=Non
         }
         input_image_argument = settings.get("input_image_argument", "image_url")
         if settings.get("input_image_list"):
-            arguments[input_image_argument] = [image_url]
+            arguments[input_image_argument] = image_urls
         else:
-            arguments[input_image_argument] = image_url
+            arguments[input_image_argument] = image_urls[0]
 
         square_argument = settings.get("square_argument")
         if square_argument:
@@ -142,17 +151,20 @@ def generate_image_with_fal(prompt, input_image_path, output_path, model_key=Non
         print(f"Error during Fal.ai generation: {e}")
         return None
 
-def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None, fal_model_key=None, fal_thinking_level=None):
+def generate_image_with_imagen(prompt, output_path, client=None, model="imagen-4.0-generate-001", reference_image=None, fal_model_key=None, fal_thinking_level=None, reference_images=None):
     """Generate a single image using Fal.ai (if key present), Google Imagen, or free Pollinations fallback."""
     # 1. Check if Fal.ai API key is configured and we have a reference image
     fal_key = os.getenv("FAL_KEY")
-    if fal_key and reference_image and os.path.exists(reference_image):
+    reference_paths = reference_images or ([reference_image] if reference_image else [])
+    reference_paths = [path for path in reference_paths if path and os.path.exists(path)]
+    if fal_key and reference_paths:
         local_path = generate_image_with_fal(
             prompt,
-            reference_image,
+            reference_paths[0],
             output_path,
             model_key=fal_model_key,
-            thinking_level=fal_thinking_level
+            thinking_level=fal_thinking_level,
+            input_image_paths=reference_paths,
         )
         if local_path:
             return local_path

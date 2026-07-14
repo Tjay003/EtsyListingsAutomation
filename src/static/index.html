@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=18">
+    <link rel="stylesheet" href="style.css?v=24-image-tweak-status">
 </head>
 <body>
     <div class="app-container">
@@ -191,8 +191,9 @@
                         </div>
                     </div>
                     
-                    <div style="margin-top: 16px; flex-shrink: 0;">
-                        <button id="btn-generate" class="primary-btn" disabled style="width: 100%;">Run Pipeline</button>
+                    <div class="pipeline-run-actions">
+                        <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
+                        <button id="btn-cancel-pipeline" class="danger-btn cancel-pipeline-btn" disabled hidden>Stop Pipeline</button>
                     </div>
                 </div>
 
@@ -200,7 +201,10 @@
                 <div class="right-panel card workspace-card">
                     <div class="workspace-header">
                         <h2 class="panel-title">Etsy Listing Editor</h2>
-                        <button id="btn-save" class="secondary-btn" disabled>Save Updates</button>
+                        <div class="workspace-actions">
+                            <button id="btn-tweak-copy" class="secondary-btn" disabled>Tweak Copy</button>
+                            <button id="btn-save" class="secondary-btn" disabled>Save Updates</button>
+                        </div>
                     </div>
                     
                     <div id="listing-workspace" class="listing-workspace disabled">
@@ -322,6 +326,116 @@
 
         </main>
     </div>
+    <div id="tweak-modal" class="modal-overlay" hidden>
+        <div class="modal-dialog tweak-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="tweak-modal-title">
+            <div class="modal-header">
+                <div>
+                    <h3 id="tweak-modal-title" class="modal-title">Tweak Listing Copy</h3>
+                    <p class="tweak-modal-subtitle">Use the current generated output as the reference. This will not rescan images.</p>
+                </div>
+                <button type="button" id="tweak-modal-close" class="modal-close-btn" aria-label="Close">X</button>
+            </div>
+
+            <div class="tweak-section">
+                <label class="field-label">Quick Fix</label>
+                <div class="tweak-preset-grid" id="tweak-preset-grid">
+                    <button type="button" class="tweak-preset-btn selected" data-preset-key="fix_title" data-fields="title">Fix Title</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="fix_category" data-fields="category">Fix Category</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="improve_tags" data-fields="tags">Improve Tags</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="safer_description" data-fields="description">Safer Description</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="regenerate_description" data-fields="description">Regenerate Description</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="regenerate_all" data-fields="title,category,description,tags">Regenerate All Copy</button>
+                    <button type="button" class="tweak-preset-btn" data-preset-key="custom" data-fields="title,category,description,tags">Custom</button>
+                </div>
+            </div>
+
+            <div class="tweak-section">
+                <label class="field-label">Fields to Update</label>
+                <div class="tweak-field-grid">
+                    <label><input type="checkbox" class="tweak-field" value="title" checked> Title</label>
+                    <label><input type="checkbox" class="tweak-field" value="category"> Category</label>
+                    <label><input type="checkbox" class="tweak-field" value="description"> Description</label>
+                    <label><input type="checkbox" class="tweak-field" value="tags"> Tags</label>
+                </div>
+            </div>
+
+            <div class="tweak-section">
+                <label class="field-label" for="tweak-instruction">Custom Instruction</label>
+                <textarea id="tweak-instruction" class="textarea-input tweak-textarea" placeholder="Example: remove unsupported material claims, make the first paragraph warmer, and keep only confirmed details."></textarea>
+                <p class="tweak-hint">The result fills the editor only. Click Save Updates when you like it.</p>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="tweak-modal-cancel" class="secondary-btn">Cancel</button>
+                <button type="button" id="tweak-modal-run" class="primary-btn">Generate Tweak</button>
+            </div>
+        </div>
+    </div>
+    <div id="image-tweak-modal" class="modal-overlay" hidden>
+        <div class="modal-dialog image-tweak-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="image-tweak-modal-title">
+            <div class="modal-header">
+                <div>
+                    <h3 id="image-tweak-modal-title" class="modal-title">Tweak Generated Image</h3>
+                    <p class="tweak-modal-subtitle">Create a new edited image from the selected generated result.</p>
+                </div>
+                <button type="button" id="image-tweak-modal-close" class="modal-close-btn" aria-label="Close">X</button>
+            </div>
+
+            <div class="image-tweak-layout">
+                <div class="image-tweak-preview-panel">
+                    <label class="field-label">Selected Generated Image</label>
+                    <div class="image-tweak-preview">
+                        <img id="image-tweak-preview-img" alt="Selected generated image">
+                    </div>
+                </div>
+
+                <div class="image-tweak-controls">
+                    <div class="image-model-panel image-tweak-model-panel">
+                        <div class="input-group">
+                            <label class="field-label" for="image-tweak-model-select">Image Model</label>
+                            <select id="image-tweak-model-select" class="select-input"></select>
+                        </div>
+                        <div class="input-group">
+                            <label class="field-label" for="image-tweak-thinking-select">Thinking</label>
+                            <select id="image-tweak-thinking-select" class="select-input"></select>
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label class="field-label" for="image-tweak-prompt-mode">Prompt Type</label>
+                        <select id="image-tweak-prompt-mode" class="select-input">
+                            <option value="preset">Preset</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+
+                    <div class="input-group" id="image-tweak-preset-group">
+                        <label class="field-label" for="image-tweak-preset-select">Image Preset</label>
+                        <select id="image-tweak-preset-select" class="select-input"></select>
+                        <small id="image-tweak-preset-hint" class="task-preset-hint"></small>
+                    </div>
+
+                    <div class="input-group" id="image-tweak-custom-group">
+                        <label class="field-label" for="image-tweak-instruction">Custom Instruction</label>
+                        <textarea id="image-tweak-instruction" class="textarea-input image-tweak-textarea" placeholder="Example: keep the same product and pose, but make the lighting softer and background cleaner."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="image-tweak-reference-section">
+                <div>
+                    <label class="field-label">Optional Product Reference</label>
+                    <p id="image-tweak-reference-hint" class="reference-status">Choose an original product image if you want extra product-accuracy guidance.</p>
+                </div>
+                <div id="image-tweak-reference-grid" class="reference-image-grid image-tweak-reference-grid"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="image-tweak-modal-cancel" class="secondary-btn">Cancel</button>
+                <button type="button" id="image-tweak-modal-run" class="primary-btn">Generate Image Tweak</button>
+            </div>
+        </div>
+    </div>
     <div id="app-modal" class="modal-overlay" hidden>
         <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
@@ -339,6 +453,6 @@
             </div>
         </div>
     </div>
-    <script src="app.js?v=18-rules"></script>
+    <script src="app.js?v=24-image-tweak-status"></script>
 </body>
 </html>
