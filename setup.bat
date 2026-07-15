@@ -7,19 +7,38 @@ echo Etsy Listings Automation - First-Time Setup
 echo ==========================================
 echo.
 
+set "PYTHON_CMD="
+
 where python >nul 2>nul
-if errorlevel 1 (
+if not errorlevel 1 (
+    set "PYTHON_CMD=python"
+)
+
+if not defined PYTHON_CMD (
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        py -3 --version >nul 2>nul
+        if not errorlevel 1 (
+            set "PYTHON_CMD=py -3"
+        )
+    )
+)
+
+if not defined PYTHON_CMD (
     echo ERROR: Python was not found.
-    echo Install Python 3.11 or newer, then run this file again.
+    echo Install Python 3.11 or newer from https://www.python.org/downloads/
+    echo IMPORTANT: During install, check "Add python.exe to PATH".
+    echo Then close this window and run setup again.
     pause
     exit /b 1
 )
 
 if not exist ".venv\Scripts\python.exe" (
     echo Creating virtual environment...
-    python -m venv .venv
+    %PYTHON_CMD% -m venv .venv
     if errorlevel 1 (
         echo ERROR: Failed to create virtual environment.
+        echo If Python was just installed, restart the computer or reinstall Python with PATH enabled.
         pause
         exit /b 1
     )

@@ -9,7 +9,9 @@ The real scripts stay in the project root because they need to run beside `src`,
 1. Install Python 3.11 or newer from `https://www.python.org/downloads/`.
    - During install, check `Add python.exe to PATH`.
 2. Install Git from `https://git-scm.com/download/win`.
-3. Clone or download the project from GitHub.
+3. Clone the project from GitHub, or download the ZIP and extract the full ZIP first.
+   - Do not run the `.bat` files from inside the ZIP preview.
+   - Do not copy only the `friend-setup` folder; it needs the full project beside it.
 4. Double-click `friend-setup/1-first-time-setup.bat`.
 5. Open the generated `.env` file in the project root.
 6. Add the private API keys Tyrone shares with you.
