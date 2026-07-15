@@ -1,0 +1,122 @@
+/* Responsive overrides. Keep this imported last. */
+
+@media (min-width: 1500px) {
+    .copywriting-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 1250px) {
+    .main-panel.active.flex-panel {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .left-panel {
+        width: 100%;
+        flex: none;
+        max-width: none;
+    }
+
+    .panel-card {
+        flex: 0 0 min(760px, calc(100vh - 128px));
+        height: min(760px, calc(100vh - 128px));
+        min-height: 620px;
+    }
+
+    .workspace-card {
+        min-height: 640px;
+    }
+}
+
+@media (max-width: 720px) {
+    .app-main {
+        padding: 16px;
+    }
+
+    .preset-toolbar,
+    .task-actions,
+    .task-model-grid,
+    .image-model-panel,
+    .tweak-preset-grid,
+    .tweak-field-grid,
+    .preview-seo-grid,
+    .grid-2-col,
+    .workspace-split {
+        grid-template-columns: 1fr;
+        flex-direction: column;
+    }
+
+    .workspace-header,
+    .panel-header-flex {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .workspace-actions,
+    .preview-action-row {
+        width: 100%;
+        justify-content: stretch;
+    }
+
+    .workspace-actions .secondary-btn,
+    .preview-tweak-btn {
+        width: 100%;
+    }
+
+    .panel-card-inner {
+        padding: 20px 20px 52px;
+    }
+
+    .panel-card {
+        flex-basis: min(680px, calc(100vh - 104px));
+        height: min(680px, calc(100vh - 104px));
+        min-height: 520px;
+    }
+
+    .pipeline-run-actions {
+        grid-template-columns: 1fr;
+        padding: 22px 20px 18px;
+    }
+
+    .image-tweak-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .modal-actions {
+        flex-direction: column-reverse;
+    }
+
+    .modal-actions .primary-btn,
+    .modal-actions .secondary-btn {
+        width: 100%;
+    }
+
+    .generated-image-viewer-body {
+        grid-template-columns: 38px minmax(0, 1fr) 38px;
+        gap: 8px;
+        min-height: 420px;
+    }
+
+    .generated-image-viewer-stage {
+        height: 420px;
+    }
+
+    .viewer-nav-btn {
+        width: 38px;
+        height: 38px;
+    }
+
+    .generated-image-viewer-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}
+
+/* Listing preview responsive overrides. */
+@media (max-width: 768px) {
+    .preview-grid-top {
+        grid-template-columns: 1fr;
+    }
+}

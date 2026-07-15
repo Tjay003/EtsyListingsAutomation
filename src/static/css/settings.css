@@ -1,0 +1,123 @@
+/* Settings page, listing add-ons, and preset controls. */
+
+/* LISTING PRESETS (Settings) */
+.presets-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 32px 0 16px;
+    color: var(--neutral-grey);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.presets-divider::before,
+.presets-divider::after {
+    content: '';
+    flex: 1;
+    height: 1.5px;
+    background-color: var(--border-color);
+}
+
+.presets-hint {
+    font-size: 12px;
+    color: var(--neutral-grey);
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+
+.preset-textarea {
+    min-height: 72px;
+    resize: vertical;
+}
+
+.preset-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--bg-canvas);
+    color: var(--neutral-grey);
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* ==========================================
+   SETTINGS PANEL — SCROLLABLE LAYOUT
+   ========================================== */
+.main-panel.settings-panel {
+    display: none;
+    overflow-y: auto;
+}
+
+.main-panel.settings-panel.active {
+    display: block;
+}
+
+.settings-scroll-area {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.settings-card {
+    max-width: 1200px;
+    width: 100%;
+    height: fit-content;
+}
+
+/* ==========================================
+   PRESETS COLLAPSIBLE TOGGLE
+   ========================================== */
+.presets-divider {
+    margin: 32px 0 0;
+}
+
+.presets-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 16px;
+    font-family: var(--font-stack);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--primary);
+    background-color: var(--bg-canvas);
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+}
+
+.presets-toggle-btn:hover {
+    background-color: var(--card-bg);
+    box-shadow: 2px 2px 0px var(--primary);
+    transform: translate(-1px, -1px);
+}
+
+#presets-chevron {
+    transition: transform 0.2s ease-out;
+    flex-shrink: 0;
+}
+
+#presets-chevron.rotated {
+    transform: rotate(180deg);
+}
+
+.presets-body {
+    margin-top: 20px;
+    animation: fadeIn 0.18s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}

@@ -23,13 +23,18 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.scraper import sanitize_filename
 from src.ai_helper import (
+    DEFAULT_OPENAI_MODEL,
     get_genai_client,
+    get_copywriting_model_options,
     generate_description_from_images,
     write_etsy_listing,
     tweak_etsy_listing,
     generate_image_prompt_details,
     extract_visual_specs,
-    extract_variation_specs
+    extract_variation_specs,
+    normalize_openai_model,
+    reset_openai_model_override,
+    set_openai_model_override
 )
 from src.image_gen import (
     DEFAULT_FAL_MODEL_KEY,
@@ -242,6 +247,7 @@ class ListingTweakRequest(BaseModel):
     fields: list | None = None
     context_mode: str = "existing_output"
     current_listing: dict | None = None
+    openai_model: str = DEFAULT_OPENAI_MODEL
 
 class SettingsUpdateRequest(BaseModel):
     output_dir: str
@@ -260,6 +266,10 @@ def update_settings(req: SettingsUpdateRequest):
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/copywriting-model-options")
+def get_copywriting_model_options_api():
+    return get_copywriting_model_options()
 
 # --- LISTING PRESETS ---
 LISTING_PRESETS_PATH = os.path.join(os.path.dirname(__file__), "..", "listing_presets.json")
@@ -620,6 +630,7 @@ class GeneratedImageTweakRequest(BaseModel):
 
 class CopywritingOptions(BaseModel):
     depth: str = "quality" # "fast" | "balanced" | "quality" | "deep"
+    openai_model: str = DEFAULT_OPENAI_MODEL
 
 class RunPipelineRequest(BaseModel):
     product_slug: str
@@ -1288,6 +1299,15 @@ def normalize_copywriting_depth(copywriting_options: dict | None = None) -> str:
     depth = str((copywriting_options or {}).get("depth") or "quality").strip().lower()
     return depth if depth in COPYWRITING_DEPTH_CONFIG else "quality"
 
+def normalize_copywriting_model(copywriting_options: dict | None = None) -> str:
+    options = copywriting_options or {}
+    return normalize_openai_model(
+        options.get("openai_model")
+        or options.get("model_key")
+        or options.get("model")
+        or DEFAULT_OPENAI_MODEL
+    )
+
 def can_reuse_copywriting_cache(cached_depth: str | None, requested_depth: str) -> bool:
     cached_rank = COPYWRITING_DEPTH_RANK.get(str(cached_depth or "").strip().lower(), 0)
     requested_rank = COPYWRITING_DEPTH_RANK.get(requested_depth, COPYWRITING_DEPTH_RANK["quality"])
@@ -1345,6 +1365,7 @@ def cap_variation_items(depth: str, var_items: list) -> list:
 def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, image_settings: dict = None, copywriting_options: dict = None, user_token: str = "default"):
     meta_path = None
     metadata = {}
+    openai_model_token = None
     try:
         user_token = sanitize_user_token(user_token)
         product_dir = resolve_product_dir(user_token, slug)
@@ -1372,6 +1393,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         title = metadata.get("title", "")
         price = metadata.get("price", "")
         copywriting_depth = normalize_copywriting_depth(copywriting_options)
+        copywriting_model = normalize_copywriting_model(copywriting_options)
         depth_config = COPYWRITING_DEPTH_CONFIG[copywriting_depth]
         check_pipeline_cancelled(user_token, slug)
 
@@ -1407,6 +1429,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             }, user_token)
             return
 
+        metadata["copywriting_options"] = {
+            "depth": copywriting_depth,
+            "openai_model": copywriting_model,
+        }
+
         # Build description input early so copywriting depth can decide whether scans are needed.
         specs_text = "\n".join([f"{k}: {v}" for k, v in metadata.get("specs", {}).items()])
         desc_input = metadata.get("description_text", "")
@@ -1417,6 +1444,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "status": "progress",
             "message": f"Copywriting depth: {copywriting_depth.title()}",
         }, user_token)
+        streamer.publish({
+            "status": "progress",
+            "message": f"Copywriting model: {copywriting_model}",
+        }, user_token)
+        openai_model_token = set_openai_model_override(copywriting_model)
         check_pipeline_cancelled(user_token, slug)
 
         # --- PHASE 1: SMART VISUAL EXTRACTION (Or use cache) ---
@@ -1557,6 +1589,10 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         if not etsy_listing:
             raise Exception("Copywriting generation failed.")
 
+        if openai_model_token is not None:
+            reset_openai_model_override(openai_model_token)
+            openai_model_token = None
+
         # Save etsy listing info to metadata
         metadata["etsy_listing"] = etsy_listing
 
@@ -1627,6 +1663,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "slug": slug,
         }, user_token)
     finally:
+        if openai_model_token is not None:
+            try:
+                reset_openai_model_override(openai_model_token)
+            except Exception:
+                pass
         try:
             clear_pipeline_cancel(user_token, slug)
         except Exception:
@@ -1698,18 +1739,22 @@ def tweak_listing(req: ListingTweakRequest, user_token: str = Depends(get_user_t
         if not fields:
             raise HTTPException(status_code=400, detail="Select at least one copy field to tweak.")
 
-        listing = tweak_etsy_listing(
-            existing_listing=current_listing,
-            preset_key=req.preset_key,
-            instruction=req.instruction,
-            fields=fields,
-            source_context=build_listing_tweak_source_context(metadata),
-            image_facts=metadata.get("image_facts") or {},
-            variation_specs=metadata.get("variation_specs") or [],
-            price=metadata.get("price", ""),
-            presets=load_listing_presets(),
-            client=get_genai_client(),
-        )
+        model_token = set_openai_model_override(req.openai_model)
+        try:
+            listing = tweak_etsy_listing(
+                existing_listing=current_listing,
+                preset_key=req.preset_key,
+                instruction=req.instruction,
+                fields=fields,
+                source_context=build_listing_tweak_source_context(metadata),
+                image_facts=metadata.get("image_facts") or {},
+                variation_specs=metadata.get("variation_specs") or [],
+                price=metadata.get("price", ""),
+                presets=load_listing_presets(),
+                client=get_genai_client(),
+            )
+        finally:
+            reset_openai_model_override(model_token)
 
         if not listing:
             raise HTTPException(status_code=500, detail="Copy tweak failed.")

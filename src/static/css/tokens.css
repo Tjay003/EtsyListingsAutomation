@@ -1,0 +1,27 @@
+/* Design tokens and global reset. */
+
+/* ==========================================
+   NEO-MINIMALISM DESIGN SYSTEM & STYLES
+   ========================================== */
+
+:root {
+    --bg-canvas: #F2F1EF;
+    --primary: #181818;
+    --secondary: #89857E;
+    --tertiary: #191817;
+    --border-color: #181818;
+    --neutral-grey: #797676;
+    --card-bg: #FFFFFF;
+    --console-bg: #191817;
+    --console-text: #EBEAE8;
+    --accent-red: #C83232;
+    --accent-blue: #2A64D4;
+    --accent-green: #27AE60;
+    --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}

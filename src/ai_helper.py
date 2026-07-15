@@ -2,6 +2,7 @@ import os
 import json
 import re
 import time
+from contextvars import ContextVar
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -65,6 +66,56 @@ load_dotenv()
 
 # Determine the Gemini model to use (defaulting to 1.5 Flash to stay within free tier limits)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
+DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+COPYWRITING_MODEL_OPTIONS = [
+    {
+        "key": "gpt-4.1-mini",
+        "label": "GPT-4.1 Mini",
+        "description": "Default copywriting model. Strong instruction following with much better cost than full GPT-4.1.",
+        "cost_tier": "Low",
+        "recommended_for": "Daily listing copy, batch runs, and most tweak passes.",
+    },
+    {
+        "key": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+        "description": "Quality upgrade for harder copywriting jobs. Higher cost than GPT-4.1 Mini.",
+        "cost_tier": "Medium",
+        "recommended_for": "Important hero listings, stubborn descriptions, or copy that needs stronger reasoning.",
+    },
+]
+_OPENAI_MODEL_KEYS = {model["key"] for model in COPYWRITING_MODEL_OPTIONS}
+_OPENAI_MODEL_OVERRIDE = ContextVar("openai_model_override", default="")
+
+def normalize_openai_model(model_key: str | None = None) -> str:
+    requested = str(model_key or "").strip()
+    if requested in _OPENAI_MODEL_KEYS:
+        return requested
+    if requested:
+        return DEFAULT_OPENAI_MODEL
+    env_model = str(os.getenv("OPENAI_MODEL") or "").strip()
+    if env_model in _OPENAI_MODEL_KEYS:
+        return env_model
+    return DEFAULT_OPENAI_MODEL
+
+def get_openai_model() -> str:
+    override = _OPENAI_MODEL_OVERRIDE.get()
+    return normalize_openai_model(override or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL)
+
+def set_openai_model_override(model_key: str | None = None):
+    return _OPENAI_MODEL_OVERRIDE.set(normalize_openai_model(model_key))
+
+def reset_openai_model_override(token):
+    _OPENAI_MODEL_OVERRIDE.reset(token)
+
+def openai_model_uses_responses(model_key: str) -> bool:
+    return model_key.startswith("gpt-5.6-")
+
+def get_copywriting_model_options() -> dict:
+    return {
+        "default_model_key": DEFAULT_OPENAI_MODEL,
+        "models": COPYWRITING_MODEL_OPTIONS,
+    }
 
 # Define the structured output format for the Etsy listing
 class SEOStrategy(BaseModel):
@@ -136,6 +187,80 @@ def get_openai_client():
         return OpenAI(api_key=api_key)
     return None
 
+def _response_output_text(response) -> str:
+    text = getattr(response, "output_text", "")
+    if text:
+        return text
+
+    chunks = []
+    for output in getattr(response, "output", []) or []:
+        content = getattr(output, "content", None)
+        if content is None and isinstance(output, dict):
+            content = output.get("content")
+        for block in content or []:
+            block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else "")
+            if block_type != "output_text":
+                continue
+            block_text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else "")
+            if block_text:
+                chunks.append(block_text)
+    return "\n".join(chunks)
+
+def _to_responses_content(content):
+    if isinstance(content, str):
+        return [{"type": "input_text", "text": content}]
+
+    converted = []
+    for item in content or []:
+        if not isinstance(item, dict):
+            converted.append({"type": "input_text", "text": str(item)})
+            continue
+
+        item_type = item.get("type")
+        if item_type == "text":
+            converted.append({"type": "input_text", "text": item.get("text", "")})
+        elif item_type == "image_url":
+            image_url = item.get("image_url", {})
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url", "")
+            if image_url:
+                converted.append({
+                    "type": "input_image",
+                    "image_url": image_url,
+                    "detail": "auto",
+                })
+    return converted or [{"type": "input_text", "text": ""}]
+
+def openai_generate_content(openai_client, content, json_object: bool = False, max_tokens: int | None = None) -> str:
+    """Generate text with the selected OpenAI model, using Responses for newer GPT-5.6 models."""
+    openai_model = get_openai_model()
+
+    if openai_model_uses_responses(openai_model):
+        response_kwargs = {
+            "model": openai_model,
+            "input": [{
+                "role": "user",
+                "content": _to_responses_content(content),
+            }],
+        }
+        if json_object:
+            response_kwargs["text"] = {"format": {"type": "json_object"}}
+        if max_tokens:
+            response_kwargs["max_output_tokens"] = max_tokens
+        response = openai_client.responses.create(**response_kwargs)
+        return _response_output_text(response)
+
+    completion_kwargs = {
+        "model": openai_model,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if json_object:
+        completion_kwargs["response_format"] = {"type": "json_object"}
+    if max_tokens:
+        completion_kwargs["max_tokens"] = max_tokens
+    response = openai_client.chat.completions.create(**completion_kwargs)
+    return response.choices[0].message.content
+
 def pil_image_to_base64_data_uri(pil_img):
     """Convert a PIL Image to a base64 JPEG data URI for OpenAI multimodal vision input."""
     import base64
@@ -178,7 +303,6 @@ def generate_description_from_images(image_paths, client=None):
     if openai_client:
         print("Using OpenAI to scan product images visually...")
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             messages = [
                 {
                     "role": "user",
@@ -200,13 +324,9 @@ def generate_description_from_images(image_paths, client=None):
                 except Exception as e:
                     print(f"Failed to convert PIL image for OpenAI: {e}")
             
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=messages,
-                max_tokens=1000
-            )
+            raw_text = openai_generate_content(openai_client, messages[0]["content"], max_tokens=1000)
             print("Visual description generated successfully via OpenAI.")
-            return response.choices[0].message.content
+            return raw_text
         except Exception as e:
             print(f"Error during OpenAI visual description generation: {e}. Falling back to Gemini...")
             
@@ -263,7 +383,6 @@ def extract_visual_specs(image_paths, client=None):
     if openai_client:
         print("Using OpenAI to extract visual specs...")
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             messages = [
                 {
                     "role": "user",
@@ -282,13 +401,8 @@ def extract_visual_specs(image_paths, client=None):
                 except Exception as e:
                     print(f"Failed to convert PIL image for OpenAI: {e}")
             
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                max_tokens=1000
-            )
-            return json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, messages[0]["content"], json_object=True, max_tokens=1000)
+            return json.loads(raw_text)
         except Exception as e:
             print(f"Error during OpenAI visual spec extraction: {e}. Falling back to Gemini...")
             
@@ -378,7 +492,6 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
     if openai_client:
         print("Using OpenAI to extract variation specs...")
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             messages = [
                 {
                     "role": "user",
@@ -397,13 +510,8 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
                         "image_url": {"url": data_uri}
                     })
 
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                max_tokens=1500
-            )
-            res_dict = json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, messages[0]["content"], json_object=True, max_tokens=1500)
+            res_dict = json.loads(raw_text)
             return res_dict.get("variations", [])
         except Exception as e:
             print(f"Error during OpenAI variation spec extraction: {e}. Falling back to Gemini...")
@@ -457,14 +565,8 @@ def clean_tags(tags, client):
             # Try OpenAI first if configured
             if openai_client:
                 try:
-                    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
                     prompt = f"Shorten this keyword phrase to be under 20 characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
-                    response = openai_client.chat.completions.create(
-                        model=openai_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=20
-                    )
-                    short_tag = response.choices[0].message.content.strip().replace('"', '').replace("'", "")
+                    short_tag = openai_generate_content(openai_client, prompt, max_tokens=20).strip().replace('"', '').replace("'", "")
                     if len(short_tag) <= 20:
                         cleaned.append(short_tag)
                         print(f"Condensed tag via OpenAI: '{tag}' -> '{short_tag}'")
@@ -814,15 +916,9 @@ def build_seo_strategy(title, description, image_facts=None, variation_specs=Non
     openai_client = get_openai_client()
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=900
-            )
+            raw_text = openai_generate_content(openai_client, prompt, json_object=True, max_tokens=900)
             return _coerce_seo_strategy(
-                json.loads(response.choices[0].message.content),
+                json.loads(raw_text),
                 title,
                 description,
                 image_facts,
@@ -1383,14 +1479,8 @@ def refine_listing_from_qa_notes(listing_data: dict, qa_notes: list, source_cont
     openai_client = get_openai_client()
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=1400,
-            )
-            return json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, prompt, json_object=True, max_tokens=1400)
+            return json.loads(raw_text)
         except Exception as e:
             print(f"Error during strict QA correction pass via OpenAI: {e}. Falling back to Gemini...")
 
@@ -1516,14 +1606,8 @@ def tweak_etsy_listing(
     openai_client = get_openai_client()
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=1500,
-            )
-            candidate = json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, prompt, json_object=True, max_tokens=1500)
+            candidate = json.loads(raw_text)
         except Exception as e:
             print(f"Error during OpenAI listing tweak: {e}. Falling back to Gemini...")
             candidate = None
@@ -1663,14 +1747,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
     openai_client = get_openai_client()
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=500
-            )
-            verdict = json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, prompt, json_object=True, max_tokens=500)
+            verdict = json.loads(raw_text)
         except Exception as e:
             print(f"Error during OpenAI self-review: {e}. Falling back to Gemini...")
             openai_client = None
@@ -1732,14 +1810,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
     corrected_data = listing_data
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": correction_prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=1000
-            )
-            corrected_data = json.loads(response.choices[0].message.content)
+            raw_text = openai_generate_content(openai_client, correction_prompt, json_object=True, max_tokens=1000)
+            corrected_data = json.loads(raw_text)
         except Exception as e:
             print(f"Error during OpenAI correction pass: {e}. Falling back to Gemini...")
             openai_client = None
@@ -1840,13 +1912,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
     if openai_client:
         print("Generating Etsy-optimized listing content via OpenAI...")
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
-            raw_text = response.choices[0].message.content
+            raw_text = openai_generate_content(openai_client, prompt, json_object=True)
             listing_data = json.loads(raw_text)
         except Exception as e:
             print(f"Error generating listing content via OpenAI: {e}. Falling back to Gemini...")
@@ -1937,22 +2003,14 @@ def generate_image_prompt_details(image_path_or_text, client=None):
             try:
                 pil_img = Image.open(image_path_or_text)
                 data_uri = pil_image_to_base64_data_uri(pil_img)
-                openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-                
-                response = openai_client.chat.completions.create(
-                    model=openai_model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": data_uri}}
-                            ]
-                        }
+                visual_details = openai_generate_content(
+                    openai_client,
+                    [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
                     ],
-                    max_tokens=250
-                )
-                visual_details = response.choices[0].message.content.strip().replace('\n', ' ').strip()
+                    max_tokens=250,
+                ).strip().replace('\n', ' ').strip()
                 if visual_details.startswith('"') and visual_details.endswith('"'):
                     visual_details = visual_details[1:-1]
                 print(f"Extracted visual details via OpenAI: {visual_details}")
@@ -1989,13 +2047,7 @@ def generate_image_prompt_details(image_path_or_text, client=None):
     openai_client = get_openai_client()
     if openai_client:
         try:
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            response = openai_client.chat.completions.create(
-                model=openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=100
-            )
-            visual_details = response.choices[0].message.content.strip().replace('\n', ' ').strip()
+            visual_details = openai_generate_content(openai_client, prompt, max_tokens=100).strip().replace('\n', ' ').strip()
             if visual_details.startswith('"') and visual_details.endswith('"'):
                 visual_details = visual_details[1:-1]
             print(f"Extracted visual details from text via OpenAI: {visual_details}")

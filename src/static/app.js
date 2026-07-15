@@ -28,6 +28,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const wsPipelineMode = document.getElementById("ws-pipeline-mode");
     const copywritingDepthSelect = document.getElementById("copywriting-depth-select");
     const copywritingDepthHint = document.getElementById("copywriting-depth-hint");
+    const copywritingModelSelect = document.getElementById("copywriting-model-select");
+    const copywritingModelHint = document.getElementById("copywriting-model-hint");
     const imageGenConfigContainer = document.getElementById("image-gen-config-container");
     const imageModelSelect = document.getElementById("image-model-select");
     const imageThinkingSelect = document.getElementById("image-thinking-select");
@@ -100,6 +102,13 @@ document.addEventListener("DOMContentLoaded", () => {
         referencePath: "",
         previewContainer: null
     };
+    let generatedImageViewerState = {
+        item: null,
+        slug: "",
+        images: [],
+        index: 0,
+        previewContainer: null
+    };
     const imageTweakingKeys = new Set();
 
     const modal = document.getElementById("app-modal");
@@ -119,6 +128,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const tweakPresetGrid = document.getElementById("tweak-preset-grid");
     const tweakInstruction = document.getElementById("tweak-instruction");
     const tweakFieldInputs = document.querySelectorAll(".tweak-field");
+
+    const generatedImageViewerModal = document.getElementById("generated-image-viewer-modal");
+    const generatedImageViewerClose = document.getElementById("generated-image-viewer-close");
+    const generatedImageViewerDismiss = document.getElementById("generated-image-viewer-dismiss");
+    const generatedImageViewerImg = document.getElementById("generated-image-viewer-img");
+    const generatedImageViewerTitle = document.getElementById("generated-image-viewer-title");
+    const generatedImageViewerSource = document.getElementById("generated-image-viewer-source");
+    const generatedImageViewerCounter = document.getElementById("generated-image-viewer-counter");
+    const generatedImageViewerStatus = document.getElementById("generated-image-viewer-status");
+    const generatedImageViewerPrev = document.getElementById("generated-image-viewer-prev");
+    const generatedImageViewerNext = document.getElementById("generated-image-viewer-next");
+    const generatedImageViewerTweak = document.getElementById("generated-image-viewer-tweak");
 
     const imageTweakModal = document.getElementById("image-tweak-modal");
     const imageTweakModalClose = document.getElementById("image-tweak-modal-close");
@@ -422,7 +443,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     instruction: tweakInstruction.value.trim(),
                     fields,
                     context_mode: "existing_output",
-                    current_listing: getEditorListingSnapshot()
+                    current_listing: getEditorListingSnapshot(),
+                    openai_model: copywritingModelSelect ? copywritingModelSelect.value : defaultCopywritingSettings.openai_model
                 })
             });
             const payload = await res.json().catch(() => ({}));
@@ -534,6 +556,7 @@ document.addEventListener("DOMContentLoaded", () => {
     async function initializeApp() {
         updateWorkspaceTokenUI();
         await promptForWorkspaceToken(userToken);
+        await loadCopywritingModelOptions();
         loadSettings();
         loadPresets();
         loadQueue();
@@ -563,7 +586,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         consoleActivityDot.classList.toggle("running", running);
         if (btnCancelPipeline) {
-            btnCancelPipeline.hidden = !running;
             btnCancelPipeline.disabled = !running || !currentPipelineSlug;
             if (!running) {
                 btnCancelPipeline.textContent = "Stop Pipeline";
@@ -685,6 +707,23 @@ document.addEventListener("DOMContentLoaded", () => {
         model_key: "flux-kontext-pro",
         thinking_level: "off"
     };
+    const defaultCopywritingSettings = {
+        openai_model: "gpt-4.1-mini"
+    };
+    let copywritingModelOptions = [
+        {
+            key: "gpt-4.1-mini",
+            label: "GPT-4.1 Mini",
+            description: "Default copywriting model. Strong instruction following at low cost.",
+            cost_tier: "Low"
+        },
+        {
+            key: "gpt-5.6-luna",
+            label: "GPT-5.6 Luna",
+            description: "Quality upgrade for harder listings. Higher cost than GPT-4.1 Mini.",
+            cost_tier: "Medium"
+        }
+    ];
     const defaultPromptPreset = "auto_product_staging";
     let imageModelOptions = [
         {
@@ -748,8 +787,51 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function getCopywritingOptions() {
         return {
-            depth: copywritingDepthSelect ? copywritingDepthSelect.value : "quality"
+            depth: copywritingDepthSelect ? copywritingDepthSelect.value : "quality",
+            openai_model: copywritingModelSelect ? copywritingModelSelect.value : defaultCopywritingSettings.openai_model
         };
+    }
+
+    function getCopywritingModelOption(key) {
+        return copywritingModelOptions.find(model => model.key === key);
+    }
+
+    function syncCopywritingModelHint() {
+        if (!copywritingModelHint || !copywritingModelSelect) return;
+        const model = getCopywritingModelOption(copywritingModelSelect.value);
+        if (!model) {
+            copywritingModelHint.textContent = "GPT-4.1 Mini is the default for strong copywriting at low cost.";
+            return;
+        }
+        const cost = model.cost_tier ? `${model.cost_tier} cost. ` : "";
+        copywritingModelHint.textContent = `${cost}${model.description || model.recommended_for || ""}`.trim();
+    }
+
+    function setCopywritingModel(modelKey) {
+        if (!copywritingModelSelect) return;
+        const option = copywritingModelSelect.querySelector(`option[value="${modelKey}"]`);
+        copywritingModelSelect.value = option ? modelKey : defaultCopywritingSettings.openai_model;
+        syncCopywritingModelHint();
+    }
+
+    function loadCopywritingModelOptions() {
+        if (!copywritingModelSelect) return Promise.resolve();
+        const current = copywritingModelSelect.value || defaultCopywritingSettings.openai_model;
+        return apiFetch("/api/copywriting-model-options")
+            .then(r => r.json())
+            .then(data => {
+                defaultCopywritingSettings.openai_model = data.default_model_key || defaultCopywritingSettings.openai_model;
+                copywritingModelOptions = Array.isArray(data.models) && data.models.length ? data.models : copywritingModelOptions;
+                copywritingModelSelect.innerHTML = "";
+                copywritingModelOptions.forEach(model => {
+                    const option = document.createElement("option");
+                    option.value = model.key;
+                    option.textContent = model.key === data.default_model_key ? `${model.label} (Default)` : model.label;
+                    copywritingModelSelect.appendChild(option);
+                });
+                setCopywritingModel(current || defaultCopywritingSettings.openai_model);
+            })
+            .catch(() => setCopywritingModel(defaultCopywritingSettings.openai_model));
     }
 
     function setImageSettings(settings = {}) {
@@ -1010,7 +1092,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (imageTweakModal) imageTweakModal.hidden = true;
     }
 
-    function applyGeneratedImageTweakResult(slug, generatedImages) {
+    function applyGeneratedImageTweakResult(slug, generatedImages, preferredImagePath = "") {
         const product = queueData.find(item => item.slug === slug) || imageTweakState.item;
         if (product) {
             product.generated_images = generatedImages;
@@ -1025,6 +1107,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (imageTweakState.previewContainer && imageTweakState.item) {
             renderPreviewGeneratedImages(imageTweakState.previewContainer, generatedImages, slug, imageTweakState.item);
         }
+        refreshGeneratedImageViewer(slug, generatedImages, preferredImagePath);
     }
 
     function getImageTweakKey(slug, imagePath) {
@@ -1044,6 +1127,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (imageTweakState.previewContainer && imageTweakState.item?.slug === slug) {
             renderPreviewGeneratedImages(imageTweakState.previewContainer, generatedImages, slug, imageTweakState.item);
         }
+        refreshGeneratedImageViewer(slug, generatedImages);
     }
 
     async function runGeneratedImageTweak() {
@@ -1086,7 +1170,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 throw new Error(payload.detail || payload.message || "Image tweak failed");
             }
 
-            applyGeneratedImageTweakResult(item.slug, payload.generated_images || []);
+            const nextGeneratedImages = payload.generated_images || [];
+            const newImagePath = getImagePath(payload.generated_image)
+                || getImagePath(nextGeneratedImages[nextGeneratedImages.length - 1]);
+            applyGeneratedImageTweakResult(item.slug, nextGeneratedImages, newImagePath);
             closeGeneratedImageTweakModal();
             logConsole("success", `Image tweak finished for ${item.slug}. Added ${payload.generated_image?.local_path || "new generated image"}.`);
             notifyPipeline({
@@ -1239,7 +1326,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (copywritingDepthSelect) {
             copywritingDepthSelect.disabled = wsPipelineMode.value === "images_only";
         }
+        if (copywritingModelSelect) {
+            copywritingModelSelect.disabled = wsPipelineMode.value === "images_only";
+        }
         syncCopywritingDepthHint();
+        syncCopywritingModelHint();
     }
 
     function syncCopywritingDepthHint() {
@@ -1260,6 +1351,9 @@ document.addEventListener("DOMContentLoaded", () => {
     wsPipelineMode.addEventListener("change", syncPipelineModeUI);
     if (copywritingDepthSelect) {
         copywritingDepthSelect.addEventListener("change", syncCopywritingDepthHint);
+    }
+    if (copywritingModelSelect) {
+        copywritingModelSelect.addEventListener("change", syncCopywritingModelHint);
     }
     syncPipelineModeUI();
 
@@ -1706,12 +1800,143 @@ document.addEventListener("DOMContentLoaded", () => {
         return "";
     }
 
+    function getGeneratedImageEntries(images) {
+        return (Array.isArray(images) ? images : [])
+            .map(entry => ({ entry, imagePath: getImagePath(entry) }))
+            .filter(item => item.imagePath);
+    }
+
+    function getViewerCurrentEntry() {
+        return generatedImageViewerState.images[generatedImageViewerState.index] || null;
+    }
+
+    function renderGeneratedImageViewer() {
+        if (!generatedImageViewerModal || !generatedImageViewerImg) return;
+
+        const current = getViewerCurrentEntry();
+        const total = generatedImageViewerState.images.length;
+        const currentNumber = total ? generatedImageViewerState.index + 1 : 0;
+        const imagePath = current?.imagePath || "";
+        const sourceLabel = current ? getGeneratedSourceLabel(current.entry) : "";
+        const busy = isImageTweaking(generatedImageViewerState.slug, imagePath);
+
+        generatedImageViewerTitle.textContent = total > 1
+            ? `Generated Image ${currentNumber}`
+            : "Generated Image";
+        generatedImageViewerCounter.textContent = total
+            ? `Image ${currentNumber} of ${total}`
+            : "No image selected";
+        generatedImageViewerSource.textContent = sourceLabel || "Inspect the generated result before tweaking.";
+        generatedImageViewerImg.src = imagePath
+            ? getProductImageSrc(generatedImageViewerState.slug, imagePath, true)
+            : "";
+        generatedImageViewerImg.alt = total
+            ? `Generated image ${currentNumber}`
+            : "Generated listing image";
+
+        if (generatedImageViewerStatus) {
+            generatedImageViewerStatus.hidden = !busy;
+        }
+        if (generatedImageViewerTweak) {
+            generatedImageViewerTweak.disabled = !current || busy;
+            generatedImageViewerTweak.textContent = busy ? "Tweaking..." : "Tweak Image";
+        }
+        if (generatedImageViewerPrev) {
+            generatedImageViewerPrev.disabled = total < 2;
+        }
+        if (generatedImageViewerNext) {
+            generatedImageViewerNext.disabled = total < 2;
+        }
+    }
+
+    function openGeneratedImageViewer({ item = null, slug = "", images = [], index = 0, previewContainer = null } = {}) {
+        const product = item || queueData.find(q => q.slug === slug) || null;
+        const productSlug = slug || product?.slug || "";
+        const entries = getGeneratedImageEntries(images.length ? images : product?.generated_images);
+        if (!productSlug || entries.length === 0) {
+            showInfoModal("No Generated Image", "This listing does not have a generated image to preview yet.");
+            return;
+        }
+
+        generatedImageViewerState = {
+            item: product,
+            slug: productSlug,
+            images: entries,
+            index: Math.max(0, Math.min(index, entries.length - 1)),
+            previewContainer
+        };
+        renderGeneratedImageViewer();
+        generatedImageViewerModal.hidden = false;
+        setTimeout(() => generatedImageViewerTweak?.focus(), 0);
+    }
+
+    function closeGeneratedImageViewer() {
+        if (generatedImageViewerModal) generatedImageViewerModal.hidden = true;
+    }
+
+    function moveGeneratedImageViewer(delta) {
+        const total = generatedImageViewerState.images.length;
+        if (total < 2) return;
+        generatedImageViewerState.index = (generatedImageViewerState.index + delta + total) % total;
+        renderGeneratedImageViewer();
+    }
+
+    function refreshGeneratedImageViewer(slug, generatedImages, preferredImagePath = "") {
+        if (!generatedImageViewerModal || generatedImageViewerState.slug !== slug) return;
+        const entries = getGeneratedImageEntries(generatedImages);
+        if (entries.length === 0) {
+            closeGeneratedImageViewer();
+            return;
+        }
+
+        generatedImageViewerState.images = entries;
+        if (generatedImageViewerState.item) {
+            generatedImageViewerState.item.generated_images = generatedImages;
+        }
+
+        const targetIndex = preferredImagePath
+            ? entries.findIndex(item => item.imagePath === preferredImagePath)
+            : -1;
+        generatedImageViewerState.index = targetIndex >= 0
+            ? targetIndex
+            : Math.min(generatedImageViewerState.index, entries.length - 1);
+        renderGeneratedImageViewer();
+    }
+
+    function tweakCurrentGeneratedViewerImage() {
+        const current = getViewerCurrentEntry();
+        if (!current || isImageTweaking(generatedImageViewerState.slug, current.imagePath)) return;
+        const product = generatedImageViewerState.item
+            || queueData.find(q => q.slug === generatedImageViewerState.slug)
+            || (selectedQueueItem?.slug === generatedImageViewerState.slug ? selectedQueueItem : null);
+        openGeneratedImageTweakModal(product, current.entry, generatedImageViewerState.previewContainer);
+    }
+
+    if (generatedImageViewerClose) generatedImageViewerClose.addEventListener("click", closeGeneratedImageViewer);
+    if (generatedImageViewerDismiss) generatedImageViewerDismiss.addEventListener("click", closeGeneratedImageViewer);
+    if (generatedImageViewerPrev) generatedImageViewerPrev.addEventListener("click", () => moveGeneratedImageViewer(-1));
+    if (generatedImageViewerNext) generatedImageViewerNext.addEventListener("click", () => moveGeneratedImageViewer(1));
+    if (generatedImageViewerTweak) generatedImageViewerTweak.addEventListener("click", tweakCurrentGeneratedViewerImage);
+    if (generatedImageViewerModal) {
+        generatedImageViewerModal.addEventListener("click", (event) => {
+            if (event.target === generatedImageViewerModal) closeGeneratedImageViewer();
+        });
+        document.addEventListener("keydown", (event) => {
+            if (generatedImageViewerModal.hidden) return;
+            if (event.key === "Escape" && imageTweakModal?.hidden !== false) {
+                closeGeneratedImageViewer();
+            } else if (event.key === "ArrowLeft") {
+                moveGeneratedImageViewer(-1);
+            } else if (event.key === "ArrowRight") {
+                moveGeneratedImageViewer(1);
+            }
+        });
+    }
+
     function renderPreviewGeneratedImages(container, images, slug, item = null) {
         container.innerHTML = "";
 
-        const generatedEntries = (Array.isArray(images) ? images : [])
-            .map(entry => ({ entry, imagePath: getImagePath(entry) }))
-            .filter(item => item.imagePath);
+        const generatedEntries = getGeneratedImageEntries(images);
 
         if (generatedEntries.length === 0) {
             container.innerHTML = `<div class="preview-generated-empty">No generated images yet.</div>`;
@@ -1731,29 +1956,16 @@ document.addEventListener("DOMContentLoaded", () => {
             img.alt = `Generated image ${index + 1}`;
             img.loading = "lazy";
             img.addEventListener("click", () => {
-                window.open(src, "_blank", "noopener,noreferrer");
+                const product = item || queueData.find(q => q.slug === slug);
+                openGeneratedImageViewer({ item: product, slug, images, index, previewContainer: container });
             });
 
             const badge = document.createElement("span");
             badge.className = "preview-generated-badge";
             badge.textContent = `${index + 1}`;
 
-            const tweakBtn = document.createElement("button");
-            tweakBtn.type = "button";
-            tweakBtn.className = "generated-tweak-btn";
-            tweakBtn.textContent = busy ? "Tweaking..." : "Tweak";
-            tweakBtn.disabled = busy;
-            tweakBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (busy) return;
-                const product = item || queueData.find(q => q.slug === slug);
-                openGeneratedImageTweakModal(product, entry, container);
-            });
-
             tile.appendChild(img);
             tile.appendChild(badge);
-            tile.appendChild(tweakBtn);
             if (busy) {
                 const status = document.createElement("span");
                 status.className = "generated-tweak-status";
@@ -2608,7 +2820,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        images.forEach((imgFile) => {
+        images.forEach((imgFile, index) => {
             const imagePath = getImagePath(imgFile);
             if (!imagePath) return;
             const sourceLabel = getGeneratedSourceLabel(imgFile);
@@ -2630,19 +2842,13 @@ document.addEventListener("DOMContentLoaded", () => {
             imgWrap.className = "prompt-card-img-wrapper";
             const img = document.createElement("img");
             img.src = getProductImageSrc(slug, imagePath, true);
+            img.alt = `Generated image ${index + 1}`;
             img.style.display = "block";
-            
-            imgWrap.appendChild(img);
-            const tweakBtn = document.createElement("button");
-            tweakBtn.type = "button";
-            tweakBtn.className = "generated-tweak-btn prompt-card-tweak-btn";
-            tweakBtn.textContent = busy ? "Tweaking..." : "Tweak";
-            tweakBtn.disabled = busy;
-            tweakBtn.addEventListener("click", () => {
-                if (busy) return;
-                openGeneratedImageTweakModal(item, imgFile);
+            img.addEventListener("click", () => {
+                openGeneratedImageViewer({ item, slug, images, index });
             });
-            imgWrap.appendChild(tweakBtn);
+
+            imgWrap.appendChild(img);
             if (busy) {
                 const status = document.createElement("span");
                 status.className = "generated-tweak-status";

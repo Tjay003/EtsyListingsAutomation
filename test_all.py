@@ -905,6 +905,16 @@ class TestHostedWorkspaceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_copywriting_model_options_include_default_and_luna(self):
+        response = self.client.get("/api/copywriting-model-options")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["default_model_key"], "gpt-4.1-mini")
+        model_keys = [model["key"] for model in payload["models"]]
+        self.assertIn("gpt-4.1-mini", model_keys)
+        self.assertIn("gpt-5.6-luna", model_keys)
+
     def test_copywriting_depth_variation_scan_policy(self):
         from src import server
 
@@ -934,6 +944,8 @@ class TestHostedWorkspaceIsolation(unittest.TestCase):
         self.assertFalse(server.can_reuse_copywriting_cache("balanced", "quality"))
         self.assertTrue(server.can_reuse_copywriting_cache("quality", "balanced"))
         self.assertTrue(server.can_reuse_copywriting_cache("quality", "quality"))
+        self.assertEqual(server.normalize_copywriting_model({"openai_model": "gpt-5.6-luna"}), "gpt-5.6-luna")
+        self.assertEqual(server.normalize_copywriting_model({"openai_model": "unknown-model"}), "gpt-4.1-mini")
 
     def test_run_pipeline_accepts_copywriting_depth_option(self):
         self.write_product("depth-user", "depth-product", "Depth Product")
@@ -947,12 +959,12 @@ class TestHostedWorkspaceIsolation(unittest.TestCase):
                     "mode": "listing_only",
                     "image_tasks": [],
                     "image_settings": {"model_key": "flux-kontext-pro"},
-                    "copywriting_options": {"depth": "fast"}
+                    "copywriting_options": {"depth": "fast", "openai_model": "gpt-5.6-luna"}
                 }
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(mock_background.call_args.args[4], {"depth": "fast"})
+        self.assertEqual(mock_background.call_args.args[4], {"depth": "fast", "openai_model": "gpt-5.6-luna"})
 
     def test_cancel_pipeline_marks_processing_item_cancelling(self):
         self.write_product("cancel-user", "cancel-product", "Cancel Product", status="processing")

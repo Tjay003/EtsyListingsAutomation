@@ -1,0 +1,12 @@
+/* Base document styles. */
+
+body {
+    background-color: var(--bg-canvas);
+    color: var(--primary);
+    font-family: var(--font-stack);
+    font-size: 14px;
+    line-height: 1.5;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+}

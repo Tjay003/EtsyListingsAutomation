@@ -1,0 +1,516 @@
+/* App shell, header, navigation, panels, cards, and console layout. */
+
+/* APP CONTAINER */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* HEADER */
+.app-header {
+    background-color: var(--card-bg);
+    border-bottom: 2px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    height: 64px;
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    width: 28px;
+    height: 28px;
+    color: var(--primary);
+}
+
+.logo-text {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--primary);
+}
+
+.top-nav {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+}
+
+.nav-btn {
+    background: none;
+    border: none;
+    font-family: var(--font-stack);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--neutral-grey);
+    padding: 0 16px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.nav-btn:hover {
+    color: var(--primary);
+}
+
+.nav-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background-color: var(--bg-canvas);
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.workspace-token-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px 6px 12px;
+    background-color: var(--bg-canvas);
+    border: 1.5px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.workspace-token-label {
+    color: var(--neutral-grey);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+
+.workspace-token-value {
+    max-width: 150px;
+    overflow: hidden;
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workspace-switch-btn {
+    border: 1.5px solid var(--border-color);
+    border-radius: 5px;
+    background: var(--card-bg);
+    color: var(--primary);
+    cursor: pointer;
+    font-family: var(--font-stack);
+    font-size: 11px;
+    font-weight: 800;
+    padding: 4px 8px;
+}
+
+.workspace-switch-btn:hover {
+    background: var(--primary);
+    color: var(--card-bg);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    background-color: #34A853;
+    border-radius: 50%;
+    border: 1px solid var(--primary);
+}
+
+.status-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.notification-stack {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 700;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(360px, calc(100vw - 32px));
+    pointer-events: none;
+}
+
+.app-notification {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px;
+    background: var(--card-bg);
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 4px 4px 0 var(--secondary);
+    pointer-events: auto;
+    animation: notification-in 0.18s ease-out;
+}
+
+.app-notification.leaving {
+    animation: notification-out 0.18s ease-in forwards;
+}
+
+.notification-success {
+    border-left: 8px solid #27AE60;
+}
+
+.notification-error {
+    border-left: 8px solid var(--accent-red);
+}
+
+.notification-info {
+    border-left: 8px solid var(--accent-blue);
+}
+
+.notification-content {
+    min-width: 0;
+    flex: 1;
+}
+
+.notification-title {
+    display: block;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+    margin-bottom: 4px;
+}
+
+.notification-message {
+    color: var(--neutral-grey);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.notification-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--bg-canvas);
+    color: var(--primary);
+    cursor: pointer;
+    font-family: var(--font-stack);
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.notification-close:hover {
+    background: var(--primary);
+    color: var(--card-bg);
+}
+
+@keyframes notification-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes notification-out {
+    to {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}
+
+/* MAIN LAYOUT */
+.app-main {
+    display: flex;
+    flex: 1;
+    height: calc(100vh - 64px);
+    padding: 32px;
+    overflow: hidden;
+    transition: padding-right 0.3s ease;
+}
+
+.app-main.console-open {
+    padding-right: calc(340px + 32px);
+}
+
+.main-panel {
+    width: 100%;
+    height: 100%;
+    display: none;
+}
+.main-panel.active {
+    display: block;
+}
+.main-panel.active.flex-panel {
+    display: flex;
+    gap: 28px;
+    flex-direction: row;
+    align-items: stretch;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* CARDS */
+.card {
+    background-color: var(--card-bg);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 4px 4px 0px var(--secondary);
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+}
+.full-height {
+    height: 100%;
+}
+
+.left-panel {
+    flex: 0 0 clamp(460px, 32vw, 620px);
+    width: clamp(460px, 32vw, 620px);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.panel-card {
+    flex: 1;
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+}
+
+.panel-card-inner {
+    flex: 1;
+    min-height: 0;
+    padding: 28px 28px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.panel-card-inner::after {
+    content: "";
+    display: block;
+    flex: 0 0 24px;
+}
+
+.workspace-card {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.panel-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--bg-canvas);
+    padding-bottom: 12px;
+}
+
+.panel-header-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid var(--bg-canvas);
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+}
+
+.panel-header-flex .panel-title {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.header-actions {
+    display: flex;
+    gap: 12px;
+}
+
+/* CONSOLE MONITOR */
+.console-card {
+    flex: 1;
+    overflow: hidden;
+    background-color: var(--console-bg);
+    border-color: var(--border-color);
+    box-shadow: 4px 4px 0px var(--neutral-grey);
+}
+
+.console-title {
+    color: var(--console-text);
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--neutral-grey);
+    padding-bottom: 8px;
+}
+
+.console-logs {
+    flex: 1;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--console-text);
+    padding-right: 8px;
+}
+
+.log-entry { line-height: 1.4; }
+.log-entry.system { color: var(--secondary); }
+.log-entry.progress { color: #4FB3E8; }
+.log-entry.success { color: #45D070; }
+.log-entry.error { color: #FF5A5A; }
+
+/* ==========================================
+   CONSOLE TOGGLE BUTTON (HEADER)
+   ========================================== */
+.console-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-stack);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--bg-canvas);
+    color: var(--primary);
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+    position: relative;
+}
+
+.console-toggle-btn:hover {
+    background-color: var(--card-bg);
+    box-shadow: 2px 2px 0px var(--primary);
+    transform: translate(-1px, -1px);
+}
+
+.console-toggle-btn.active {
+    background-color: var(--primary);
+    color: #fff;
+}
+
+/* Pulsing activity dot — shown when pipeline is running */
+.console-activity-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: transparent;
+    transition: background-color 0.2s;
+}
+
+.console-activity-dot.running {
+    background-color: #4FB3E8;
+    animation: pulse-dot 1.2s infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+}
+
+/* ==========================================
+   GLOBAL CONSOLE SIDEBAR
+   ========================================== */
+.console-sidebar {
+    position: fixed;
+    top: 64px; /* below header */
+    right: 0;
+    width: 340px;
+    height: calc(100vh - 64px);
+    background-color: var(--console-bg);
+    border-left: 2px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+}
+
+.console-sidebar.open {
+    transform: translateX(0);
+}
+
+.console-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--neutral-grey);
+    flex-shrink: 0;
+}
+
+/* Override existing console-title for sidebar context */
+.console-sidebar .console-title {
+    color: var(--console-text);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.console-clear-btn {
+    font-family: var(--font-stack);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border: 1px solid var(--neutral-grey);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--neutral-grey);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.console-clear-btn:hover {
+    border-color: var(--console-text);
+    color: var(--console-text);
+}
+
+.console-sidebar .console-logs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}

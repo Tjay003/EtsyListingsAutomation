@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=24-image-tweak-status">
+    <link rel="stylesheet" href="style.css?v=27-generated-image-viewer">
 </head>
 <body>
     <div class="app-container">
@@ -106,94 +106,121 @@
                 <div class="left-panel">
                     <div class="card panel-card">
                         <div class="panel-card-inner">
-                        <h2 class="panel-title">Pipeline Control</h2>
-                        
-                        <div class="input-group">
-                            <label class="field-label">Selected Product</label>
-                            <input type="text" id="ws-product-title" class="text-input" readonly placeholder="No product selected">
-                            <input type="hidden" id="ws-product-slug">
-                        </div>
-                        
-                        <div class="input-group">
-                            <label class="field-label">Pipeline Mode</label>
-                            <select id="ws-pipeline-mode" class="select-input">
-                                <option value="listing_only">Listing Copy Only</option>
-                                <option value="listing_with_images">Listing Copy + AI Images</option>
-                                <option value="images_only">AI Images Only</option>
-                            </select>
-                        </div>
+                            <h2 class="panel-title">Pipeline Control</h2>
 
-                        <div class="input-group" id="copywriting-depth-group">
-                            <label class="field-label" for="copywriting-depth-select">Copywriting Depth</label>
-                            <select id="copywriting-depth-select" class="select-input">
-                                <option value="fast">Fast Batch</option>
-                                <option value="balanced">Balanced</option>
-                                <option value="quality" selected>Quality Review</option>
-                                <option value="deep">Deep Scan</option>
-                            </select>
-                            <p class="field-hint" id="copywriting-depth-hint">Quality Review uses modest scans plus stricter QA. It allows natural storytelling but avoids unsupported product details.</p>
-                        </div>
+                            <div class="pipeline-section">
+                                <div class="pipeline-section-header">
+                                    <span class="pipeline-section-kicker">Product &amp; Mode</span>
+                                </div>
+                                <div class="pipeline-control-grid product-mode-grid">
+                                    <div class="input-group">
+                                        <label class="field-label">Selected Product</label>
+                                        <input type="text" id="ws-product-title" class="text-input" readonly placeholder="No product selected">
+                                        <input type="hidden" id="ws-product-slug">
+                                    </div>
 
-                        <div id="reference-picker-container" class="reference-picker-container">
-                            <div class="reference-picker-header">
-                                <div>
-                                    <label class="field-label">Reference Image</label>
-                                    <p id="reference-status" class="reference-status">Select a product to choose the source image for AI edits.</p>
+                                    <div class="input-group">
+                                        <label class="field-label">Pipeline Mode</label>
+                                        <select id="ws-pipeline-mode" class="select-input">
+                                            <option value="listing_only">Listing Copy Only</option>
+                                            <option value="listing_with_images">Listing Copy + AI Images</option>
+                                            <option value="images_only">AI Images Only</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
-                            <div id="reference-image-grid" class="reference-image-grid">
-                                <div class="reference-empty">No product selected.</div>
-                            </div>
-                        </div>
 
-                        <!-- IMAGE GENERATION CONFIGURATION -->
-                        <div id="image-gen-config-container" class="image-gen-config">
-                            <div class="pipeline-subheader">
-                                <label class="field-label">Pipeline Presets</label>
-                            </div>
-                            <div class="preset-toolbar">
-                                <select id="preset-selector" class="select-input preset-select">
-                                    <option value="">-- Load a Preset --</option>
-                                </select>
-                                <button type="button" id="btn-save-preset" class="secondary-btn compact-btn" title="Save Current Config">Save Preset</button>
-                                <button type="button" id="btn-delete-preset" class="secondary-btn preset-delete-btn" title="Delete Selected Preset">Delete</button>
+                            <div class="pipeline-section">
+                                <div class="pipeline-section-header">
+                                    <span class="pipeline-section-kicker">Copywriting</span>
+                                </div>
+                                <div class="pipeline-control-grid copywriting-grid">
+                                    <div class="input-group" id="copywriting-depth-group">
+                                        <label class="field-label" for="copywriting-depth-select">Copywriting Depth</label>
+                                        <select id="copywriting-depth-select" class="select-input">
+                                            <option value="fast">Fast Batch</option>
+                                            <option value="balanced">Balanced</option>
+                                            <option value="quality" selected>Quality Review</option>
+                                            <option value="deep">Deep Scan</option>
+                                        </select>
+                                        <p class="field-hint" id="copywriting-depth-hint">Quality Review uses modest scans plus stricter QA. It allows natural storytelling but avoids unsupported product details.</p>
+                                    </div>
+
+                                    <div class="input-group" id="copywriting-model-group">
+                                        <label class="field-label" for="copywriting-model-select">Copywriting Model</label>
+                                        <select id="copywriting-model-select" class="select-input">
+                                            <option value="gpt-4.1-mini" selected>GPT-4.1 Mini (Default)</option>
+                                            <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+                                        </select>
+                                        <p class="field-hint" id="copywriting-model-hint">GPT-4.1 Mini is the default for strong copywriting at low cost.</p>
+                                    </div>
+                                </div>
                             </div>
 
-                            <div class="image-model-panel">
-                                <div class="input-group">
-                                    <label class="field-label" for="image-model-select">Image Model</label>
-                                    <select id="image-model-select" class="select-input">
-                                        <option value="flux-kontext-pro" selected>Flux Kontext Pro</option>
-                                        <option value="flux-kontext-dev">Flux Kontext Dev</option>
-                                        <option value="nano-banana-2-edit">Nano Banana 2 Edit</option>
+                            <div id="reference-picker-container" class="reference-picker-container pipeline-section">
+                                <div class="reference-picker-header">
+                                    <div>
+                                        <span class="pipeline-section-kicker">Reference Image</span>
+                                        <p id="reference-status" class="reference-status">Select a product to choose the source image for AI edits.</p>
+                                    </div>
+                                </div>
+                                <div id="reference-image-grid" class="reference-image-grid">
+                                    <div class="reference-empty">No product selected.</div>
+                                </div>
+                            </div>
+
+                            <!-- IMAGE GENERATION CONFIGURATION -->
+                            <div id="image-gen-config-container" class="image-gen-config pipeline-section">
+                                <div class="pipeline-section-header">
+                                    <span class="pipeline-section-kicker">Image Generation</span>
+                                </div>
+                                <div class="pipeline-subheader">
+                                    <label class="field-label">Pipeline Presets</label>
+                                </div>
+                                <div class="preset-toolbar">
+                                    <select id="preset-selector" class="select-input preset-select">
+                                        <option value="">-- Load a Preset --</option>
                                     </select>
+                                    <button type="button" id="btn-save-preset" class="secondary-btn compact-btn" title="Save Current Config">Save Preset</button>
+                                    <button type="button" id="btn-delete-preset" class="secondary-btn preset-delete-btn" title="Delete Selected Preset">Delete</button>
                                 </div>
-                                <div class="input-group">
-                                    <label class="field-label" for="image-thinking-select">Thinking Mode</label>
-                                    <select id="image-thinking-select" class="select-input" disabled>
-                                        <option value="off" selected>Off</option>
-                                        <option value="minimal">Minimal</option>
-                                        <option value="high">High</option>
-                                    </select>
-                                </div>
-                                <p class="image-settings-hint">Flux Kontext Pro stays default for variation batches. Use Nano Banana 2 with thinking for main showcase images.</p>
-                            </div>
 
-                            <label class="field-label task-section-label">Generation Tasks</label>
-                            <div id="image-tasks-list" class="image-tasks-list">
-                                <!-- Dynamic Tasks Go Here -->
-                            </div>
-                            <div class="task-actions">
-                                <button type="button" id="btn-add-batch-task" class="secondary-btn dashed-btn">+ Add Batch</button>
-                                <button type="button" id="btn-add-individual-task" class="secondary-btn dashed-btn">+ Add Individual</button>
+                                <div class="image-model-panel">
+                                    <div class="input-group">
+                                        <label class="field-label" for="image-model-select">Image Model</label>
+                                        <select id="image-model-select" class="select-input">
+                                            <option value="flux-kontext-pro" selected>Flux Kontext Pro</option>
+                                            <option value="flux-kontext-dev">Flux Kontext Dev</option>
+                                            <option value="nano-banana-2-edit">Nano Banana 2 Edit</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label class="field-label" for="image-thinking-select">Thinking Mode</label>
+                                        <select id="image-thinking-select" class="select-input" disabled>
+                                            <option value="off" selected>Off</option>
+                                            <option value="minimal">Minimal</option>
+                                            <option value="high">High</option>
+                                        </select>
+                                    </div>
+                                    <p class="image-settings-hint">Flux Kontext Pro stays default for variation batches. Use Nano Banana 2 with thinking for main showcase images.</p>
+                                </div>
+
+                                <label class="field-label task-section-label">Generation Tasks</label>
+                                <div id="image-tasks-list" class="image-tasks-list">
+                                    <!-- Dynamic Tasks Go Here -->
+                                </div>
+                                <div class="task-actions">
+                                    <button type="button" id="btn-add-batch-task" class="secondary-btn dashed-btn">+ Add Batch</button>
+                                    <button type="button" id="btn-add-individual-task" class="secondary-btn dashed-btn">+ Add Individual</button>
+                                </div>
                             </div>
                         </div>
+
+                        <div class="pipeline-run-actions">
+                            <span class="pipeline-section-kicker">Run Actions</span>
+                            <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
+                            <button id="btn-cancel-pipeline" class="danger-btn cancel-pipeline-btn" disabled>Stop Pipeline</button>
                         </div>
-                    </div>
-                    
-                    <div class="pipeline-run-actions">
-                        <button id="btn-generate" class="primary-btn" disabled>Run Pipeline</button>
-                        <button id="btn-cancel-pipeline" class="danger-btn cancel-pipeline-btn" disabled hidden>Stop Pipeline</button>
                     </div>
                 </div>
 
@@ -371,6 +398,34 @@
             </div>
         </div>
     </div>
+    <div id="generated-image-viewer-modal" class="modal-overlay" hidden>
+        <div class="modal-dialog generated-image-viewer-dialog" role="dialog" aria-modal="true" aria-labelledby="generated-image-viewer-title">
+            <div class="modal-header">
+                <div>
+                    <h3 id="generated-image-viewer-title" class="modal-title">Generated Image</h3>
+                    <p id="generated-image-viewer-source" class="tweak-modal-subtitle">Inspect the generated result before tweaking.</p>
+                </div>
+                <button type="button" id="generated-image-viewer-close" class="modal-close-btn" aria-label="Close">X</button>
+            </div>
+
+            <div class="generated-image-viewer-body">
+                <button type="button" id="generated-image-viewer-prev" class="viewer-nav-btn" aria-label="Previous generated image">&lt;</button>
+                <div class="generated-image-viewer-stage">
+                    <img id="generated-image-viewer-img" alt="Generated listing image">
+                    <span id="generated-image-viewer-status" class="generated-image-viewer-status" hidden>Tweaking image...</span>
+                </div>
+                <button type="button" id="generated-image-viewer-next" class="viewer-nav-btn" aria-label="Next generated image">&gt;</button>
+            </div>
+
+            <div class="generated-image-viewer-footer">
+                <span id="generated-image-viewer-counter" class="generated-image-viewer-counter">Image 1 of 1</span>
+                <div class="modal-actions">
+                    <button type="button" id="generated-image-viewer-dismiss" class="secondary-btn">Close</button>
+                    <button type="button" id="generated-image-viewer-tweak" class="primary-btn">Tweak Image</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="image-tweak-modal" class="modal-overlay" hidden>
         <div class="modal-dialog image-tweak-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="image-tweak-modal-title">
             <div class="modal-header">
@@ -453,6 +508,6 @@
             </div>
         </div>
     </div>
-    <script src="app.js?v=24-image-tweak-status"></script>
+    <script src="app.js?v=25-generated-image-viewer"></script>
 </body>
 </html>
