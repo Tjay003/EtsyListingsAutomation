@@ -33,7 +33,8 @@ The real scripts stay in the project root because they need to run beside `src`,
 
 1. Double-click `friend-setup/2-start-app.bat`.
 2. Keep the terminal window open while using the dashboard and extension.
-3. Press `Ctrl+C` in the terminal to stop the app.
+3. If the app is already running, the script will open the existing dashboard instead of starting a second server.
+4. Press `Ctrl+C` in the terminal to stop the app.
 
 ## Updating
 
