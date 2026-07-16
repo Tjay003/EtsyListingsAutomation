@@ -9,7 +9,7 @@ This project is an automated Etsy listing tool. It allows users to scrape produc
 
 ## Repository Layout
 - **`extension/`**: Chrome Extension files (Manifest V3). Contains Service Worker (`background.js`) for description interception, content parser (`content.js`), and popup UI (`popup.js`).
-- **`src/`**: Backend FastAPI server (`server.py`) and processing engines (`ai_helper.py`, `image_gen.py`).
+- **`src/`**: Backend FastAPI server (`server.py`), copywriting profile registry (`copywriting_config.py`), and processing engines (`ai_helper.py`, `image_gen.py`).
 - **`themes.yaml`**: Preconfigured styling presets (e.g. `bauhaus_beige`, `cottagecore_rustic`) for image generation.
 - **`test_all.py`**: Local unit testing suite containing logical checks.
 - **`outputs/`** (Default): Stores scraped product directories, metadata, downloaded images, and generated assets.
@@ -21,7 +21,7 @@ This project is an automated Etsy listing tool. It allows users to scrape produc
 When executing `/api/run-pipeline`, the backend processes a queued product through the following stages:
 1. **Phase 1: Smart Visual Extraction**: Scans description, main, and variation images visually to extract hard facts, specifications, and dimensions.
 2. **Phase 1b: Variation-Specific Specs Detection**: Scans variation images and titles to map specific sizes (e.g., S, M, L) and dimensions to each variation option, using overall size charts as context.
-3. **Phase 2 & 3: Enriched Copywriting & Self-Critique**: Generates SEO-optimized titles, descriptions, and tags. Gemini acts as a strict critic to check tags (max 13, <= 20 chars) and check description facts against extracted specifications before refining the final output.
+3. **Phase 2 & 3: Enriched Copywriting & Self-Critique**: Generates and reviews listing copy using the active workspace copywriting profile. Prompts, tone, QA rules, and risk overrides are configured per User Token; Etsy field limits default to safe values but can use warn-but-allow overrides.
 4. **Phase 4: Image Prompt Rolling**: Generates text-to-image prompts tailored for Midjourney/FLUX based on preconfigured visual themes.
 
 ---
@@ -35,7 +35,14 @@ The product folder under `outputs/` maintains state in a `metadata.json` file. N
   - `alt` / `title`: Variation label from page DOM.
   - `detected_specs`: `{ name, size, dimensions, other_details }` extracted by Gemini during Phase 1b.
 - `variation_specs`: Flattened list of detected variation specs.
-- `etsy_listing`: Final approved copywriting: `{ title, description, tags, suggested_price }`.
+- `etsy_listing`: Final copywriting plus Etsy compatibility warnings and enabled risk overrides.
+- `copywriting_run`: Model, depth, profile hash/version, and active risk overrides used for the run.
+
+## Copywriting Configuration
+- Each workspace stores prompt overrides in `{OUTPUT_DIR}/{user_token}/copywriting_profile.json`.
+- `src/copywriting_config.py` is the source of truth for default stage prompts, tweak prompts, risk definitions, profile merging, prompt previews, and Etsy compatibility reporting.
+- The pipeline sets one profile context for visual facts, variation extraction, SEO strategy, drafting, review, repair, and Copy Tweak. Do not add hidden editorial rules directly to helper prompts or deterministic cleanup.
+- JSON/schema integrity, selected-field preservation, workspace isolation, and path safety remain non-configurable application requirements.
 
 ---
 

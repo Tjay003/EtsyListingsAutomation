@@ -33,8 +33,20 @@ from src.ai_helper import (
     extract_visual_specs,
     extract_variation_specs,
     normalize_openai_model,
+    reset_copywriting_profile_override,
     reset_openai_model_override,
+    set_copywriting_profile_override,
     set_openai_model_override
+)
+from src.copywriting_config import (
+    DEFAULT_COPYWRITING_PROFILE,
+    build_prompt_preview,
+    copywriting_profile_hash,
+    get_etsy_compatibility,
+    get_listing_addons,
+    get_profile_api_payload,
+    normalize_copywriting_profile,
+    profile_overrides,
 )
 from src.image_gen import (
     DEFAULT_FAL_MODEL_KEY,
@@ -310,6 +322,102 @@ def load_listing_presets() -> dict:
             pass
     return dict(DEFAULT_PRESETS)
 
+COPYWRITING_PROFILE_FILENAME = "copywriting_profile.json"
+
+class CopywritingProfileResetRequest(BaseModel):
+    section: str = ""
+
+class CopywritingPromptPreviewRequest(BaseModel):
+    stage_key: str = "listing_draft"
+    profile: dict | None = None
+
+def get_copywriting_profile_path(user_token: str) -> str:
+    return resolve_user_path(user_token, COPYWRITING_PROFILE_FILENAME)
+
+def _legacy_profile_overrides() -> dict:
+    if not os.path.exists(LISTING_PRESETS_PATH):
+        return {}
+    try:
+        with open(LISTING_PRESETS_PATH, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except Exception:
+        return {}
+    migrated = {
+        "listing_addons": {
+            "shop_intro": legacy.get("shop_intro", ""),
+            "shipping_note": legacy.get("shipping_note", ""),
+            "materials_disclaimer": legacy.get("materials_disclaimer", ""),
+            "custom_policy": legacy.get("custom_policy", ""),
+        }
+    }
+    if str(legacy.get("custom_prompt_rules") or "").strip():
+        migrated["master_rules"] = str(legacy["custom_prompt_rules"]).strip()
+    return profile_overrides(normalize_copywriting_profile(migrated))
+
+def load_copywriting_profile(user_token: str = "default") -> dict:
+    path = get_copywriting_profile_path(user_token)
+    overrides = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            overrides = saved.get("overrides", saved) if isinstance(saved, dict) else {}
+        except Exception:
+            overrides = {}
+    elif os.path.exists(LISTING_PRESETS_PATH):
+        overrides = _legacy_profile_overrides()
+        if overrides:
+            save_copywriting_profile(user_token, normalize_copywriting_profile(overrides))
+    return normalize_copywriting_profile(overrides)
+
+def save_copywriting_profile(user_token: str, profile: dict) -> dict:
+    normalized = normalize_copywriting_profile(profile)
+    payload = {
+        "schema_version": normalized["schema_version"],
+        "overrides": profile_overrides(normalized),
+    }
+    with open(get_copywriting_profile_path(user_token), "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return normalized
+
+def load_workspace_listing_presets(user_token: str = "default") -> dict:
+    profile = load_copywriting_profile(user_token)
+    return {
+        **get_listing_addons(profile),
+        "custom_prompt_rules": profile.get("master_rules", ""),
+    }
+
+@app.get("/api/copywriting-profile")
+def get_copywriting_profile_api(user_token: str = Depends(get_user_token)):
+    return get_profile_api_payload(load_copywriting_profile(user_token))
+
+@app.post("/api/copywriting-profile")
+def save_copywriting_profile_api(payload: dict, user_token: str = Depends(get_user_token)):
+    normalized = save_copywriting_profile(user_token, payload.get("profile", payload))
+    return {"status": "success", **get_profile_api_payload(normalized)}
+
+@app.post("/api/copywriting-profile/reset")
+def reset_copywriting_profile_api(req: CopywritingProfileResetRequest, user_token: str = Depends(get_user_token)):
+    profile = load_copywriting_profile(user_token)
+    section = str(req.section or "").strip()
+    if section:
+        if section not in DEFAULT_COPYWRITING_PROFILE:
+            raise HTTPException(status_code=400, detail="Unknown copywriting profile section")
+        profile[section] = DEFAULT_COPYWRITING_PROFILE[section]
+    else:
+        profile = DEFAULT_COPYWRITING_PROFILE
+    normalized = save_copywriting_profile(user_token, profile)
+    return {"status": "success", **get_profile_api_payload(normalized)}
+
+@app.post("/api/copywriting-prompt-preview")
+def preview_copywriting_prompt(req: CopywritingPromptPreviewRequest, user_token: str = Depends(get_user_token)):
+    profile = normalize_copywriting_profile(req.profile) if req.profile else load_copywriting_profile(user_token)
+    return {
+        "stage_key": req.stage_key,
+        "prompt": build_prompt_preview(profile, req.stage_key),
+        "profile_hash": copywriting_profile_hash(profile),
+    }
+
 def format_listing_txt(listing: dict) -> str:
     """Build a readable Etsy copywriting export."""
     tags = listing.get("tags", []) or []
@@ -344,15 +452,19 @@ def build_listing_tweak_source_context(metadata: dict) -> str:
     return "\n".join(str(part) for part in context_parts if part is not None).strip()
 
 @app.get("/api/listing-presets")
-def get_listing_presets():
-    return load_listing_presets()
+def get_listing_presets(user_token: str = Depends(get_user_token)):
+    return load_workspace_listing_presets(user_token)
 
 @app.post("/api/listing-presets")
-def save_listing_presets(payload: dict):
+def save_listing_presets(payload: dict, user_token: str = Depends(get_user_token)):
     try:
-        presets = {k: payload.get(k, "") for k in DEFAULT_PRESETS}
-        with open(LISTING_PRESETS_PATH, "w", encoding="utf-8") as f:
-            json.dump(presets, f, indent=4, ensure_ascii=False)
+        profile = load_copywriting_profile(user_token)
+        profile["master_rules"] = str(payload.get("custom_prompt_rules", profile["master_rules"]))
+        profile["listing_addons"] = {
+            key: str(payload.get(key, profile["listing_addons"].get(key, "")))
+            for key in ("shop_intro", "shipping_note", "materials_disclaimer", "custom_policy")
+        }
+        save_copywriting_profile(user_token, profile)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1366,6 +1478,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
     meta_path = None
     metadata = {}
     openai_model_token = None
+    copywriting_profile_token = None
     try:
         user_token = sanitize_user_token(user_token)
         product_dir = resolve_product_dir(user_token, slug)
@@ -1395,6 +1508,8 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         copywriting_depth = normalize_copywriting_depth(copywriting_options)
         copywriting_model = normalize_copywriting_model(copywriting_options)
         depth_config = COPYWRITING_DEPTH_CONFIG[copywriting_depth]
+        copywriting_profile = load_copywriting_profile(user_token)
+        copywriting_profile_token = set_copywriting_profile_override(copywriting_profile)
         check_pipeline_cancelled(user_token, slug)
 
         if mode == "images_only":
@@ -1432,6 +1547,12 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         metadata["copywriting_options"] = {
             "depth": copywriting_depth,
             "openai_model": copywriting_model,
+            "profile_hash": copywriting_profile_hash(copywriting_profile),
+            "enabled_risk_overrides": [
+                key
+                for key, control in copywriting_profile.get("risk_controls", {}).items()
+                if control.get("override_enabled")
+            ],
         }
 
         # Build description input early so copywriting depth can decide whether scans are needed.
@@ -1572,7 +1693,7 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
         # --- PHASE 2 & 3: COPYWRITING & SELF-REVIEW ---
         check_pipeline_cancelled(user_token, slug)
         streamer.publish({"status": "progress", "message": "Phase 2: Generating enriched copywriting & running Phase 3 self-critique..."}, user_token)
-        presets = load_listing_presets()
+        presets = load_workspace_listing_presets(user_token)
         
         etsy_listing = write_etsy_listing(
             title=title, 
@@ -1595,6 +1716,10 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
 
         # Save etsy listing info to metadata
         metadata["etsy_listing"] = etsy_listing
+        metadata["copywriting_run"] = {
+            **metadata["copywriting_options"],
+            "profile_schema_version": copywriting_profile.get("schema_version", 1),
+        }
 
         # Image generation if requested
         generated_images = []
@@ -1663,6 +1788,11 @@ def background_run_pipeline(slug: str, mode: str, image_tasks: list = None, imag
             "slug": slug,
         }, user_token)
     finally:
+        if copywriting_profile_token is not None:
+            try:
+                reset_copywriting_profile_override(copywriting_profile_token)
+            except Exception:
+                pass
         if openai_model_token is not None:
             try:
                 reset_openai_model_override(openai_model_token)
@@ -1739,7 +1869,9 @@ def tweak_listing(req: ListingTweakRequest, user_token: str = Depends(get_user_t
         if not fields:
             raise HTTPException(status_code=400, detail="Select at least one copy field to tweak.")
 
+        profile = load_copywriting_profile(user_token)
         model_token = set_openai_model_override(req.openai_model)
+        profile_token = set_copywriting_profile_override(profile)
         try:
             listing = tweak_etsy_listing(
                 existing_listing=current_listing,
@@ -1750,10 +1882,11 @@ def tweak_listing(req: ListingTweakRequest, user_token: str = Depends(get_user_t
                 image_facts=metadata.get("image_facts") or {},
                 variation_specs=metadata.get("variation_specs") or [],
                 price=metadata.get("price", ""),
-                presets=load_listing_presets(),
+                presets=load_workspace_listing_presets(user_token),
                 client=get_genai_client(),
             )
         finally:
+            reset_copywriting_profile_override(profile_token)
             reset_openai_model_override(model_token)
 
         if not listing:
@@ -1945,6 +2078,13 @@ def save_listing(req: ListingSaveRequest, user_token: str = Depends(get_user_tok
         metadata["etsy_listing"]["suggested_price"] = req.suggested_price
         metadata["etsy_listing"]["description"] = req.description
         metadata["etsy_listing"]["tags"] = req.tags
+        compatibility = get_etsy_compatibility(
+            metadata["etsy_listing"],
+            load_copywriting_profile(user_token),
+        )
+        metadata["etsy_listing"]["etsy_compatible"] = compatibility["etsy_compatible"]
+        metadata["etsy_listing"]["etsy_compatibility_issues"] = compatibility["issues"]
+        metadata["etsy_listing"]["enabled_risk_overrides"] = compatibility["enabled_risk_overrides"]
         
         # Also update variation_images if provided in request
         if req.variation_images is not None:

@@ -60,26 +60,25 @@ document.addEventListener("DOMContentLoaded", () => {
     const settingOutputDir = document.getElementById("setting-output-dir");
     const btnSaveSettings = document.getElementById("btn-save-settings");
     const settingsStatus = document.getElementById("settings-status");
-
-    // Presets Elements
-    const presetShopIntro = document.getElementById("preset-shop-intro");
-    const presetShippingNote = document.getElementById("preset-shipping-note");
-    const presetMaterialsDisclaimer = document.getElementById("preset-materials-disclaimer");
-    const presetCustomPolicy = document.getElementById("preset-custom-policy");
-    const presetCustomPromptRules = document.getElementById("preset-custom-prompt-rules");
-    const btnResetRules = document.getElementById("btn-reset-rules");
-    const btnSavePresets = document.getElementById("btn-save-presets");
-    const presetsStatus = document.getElementById("presets-status");
-    const defaultCopywritingRules = [
-        "You are an expert e-commerce copywriter and Etsy SEO strategist specializing in premium boutique branding. Transform raw supplier/manufacturer details into a polished, readable, high-converting Etsy listing while staying factually conservative.",
-        "--- COPYWRITING AND COMPLIANCE RULES ---",
-        "1. ABSOLUTE PROHIBITIONS: Never mention \"China\", \"AliExpress\", \"mass production\", \"factory\", \"wholesale\", \"dropshipping\", \"shipping tracking variations\", \"bulk order\", \"bulk pricing\", or \"bulk sale\". Do not claim small-batch, handmade, luxury, designer, eco-friendly, or premium materials unless directly supported by the source facts. Use a curated boutique tone without inventing business-model claims.",
-        "2. TITLE RESTRICTIONS: Do not keyword-stuff titles or use pipe-separated keyword chains. Write one clear Etsy-ready buyer-friendly title under 140 characters, ideally 80-125 characters when enough supported details exist. Put the product noun and strongest objective identifiers in the first 50-60 characters.",
-        "3. DESCRIPTION FORMATTING: Optimize for readability and scanning. Avoid large text walls. Use plain Etsy-safe text only: no markdown bold/italic, no asterisks for emphasis, and no underscores. For list items or attribute breakdowns, use a literal hyphen (-). Section headers may use ALL CAPS or clear title case, but keep them consistent.",
-        "4. FACT SAFETY: Mention color, exact size, materials, capacity, closures, pockets, compatibility, gift audience, and care details only when supported by source text, image facts, or variation specs. If a detail is unknown, leave it out instead of guessing.",
-        "5. TITLE-TAG MATCH: Ensure the 2 or 3 most important keyword phrases in the title exactly match 2 or 3 of the tags when possible, while keeping tags under 20 characters.",
-        "6. OCCASION TARGETING: If clearly applicable, include 1 or 2 gift/use-intent tags such as \"gift for her\" or \"travel bag\", but do not force audience or occasion claims onto unrelated products."
-    ].join("\n");
+    const copywritingMasterRules = document.getElementById("copywriting-master-rules");
+    const copywritingBrandVoice = document.getElementById("copywriting-brand-voice");
+    const copywritingShopIntro = document.getElementById("copywriting-shop-intro");
+    const copywritingShippingNote = document.getElementById("copywriting-shipping-note");
+    const copywritingMaterialsDisclaimer = document.getElementById("copywriting-materials-disclaimer");
+    const copywritingCustomPolicy = document.getElementById("copywriting-custom-policy");
+    const copywritingStageEditors = document.getElementById("copywriting-stage-editors");
+    const copywritingTweakEditors = document.getElementById("copywriting-tweak-editors");
+    const copywritingRiskControls = document.getElementById("copywriting-risk-controls");
+    const copywritingProfileStatus = document.getElementById("copywriting-profile-status");
+    const copywritingProfileHash = document.getElementById("copywriting-profile-hash");
+    const btnSaveCopywritingProfile = document.getElementById("btn-save-copywriting-profile");
+    const btnResetCopywritingProfile = document.getElementById("btn-reset-copywriting-profile");
+    const copywritingPreviewStage = document.getElementById("copywriting-preview-stage");
+    const btnPreviewCopywritingPrompt = document.getElementById("btn-preview-copywriting-prompt");
+    const copywritingPromptPreview = document.getElementById("copywriting-prompt-preview");
+    const copywritingTechnicalContract = document.getElementById("copywriting-technical-contract");
+    const copywritingSettingsTabs = document.querySelectorAll(".copywriting-settings-tab");
+    const etsyCompatibilityBanner = document.getElementById("etsy-compatibility-banner");
     const workspaceTokenValue = document.getElementById("workspace-token-value");
     const btnSwitchWorkspace = document.getElementById("btn-switch-workspace");
 
@@ -92,6 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let pipelineRunning = false;
     let bulkCancelRequested = false;
     let currentPipelineSlug = "";
+    let copywritingProfilePayload = null;
     let userToken = localStorage.getItem("userToken") || "";
     let browserNotificationRequested = false;
     let activeTweakPreset = "fix_title";
@@ -525,6 +525,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (etsyCategory) etsyCategory.value = "";
         etsyPrice.value = "";
         etsyDesc.value = "";
+        renderEtsyCompatibility(null);
         tagsContainer.innerHTML = "";
         imagesGrid.innerHTML = `<div class="image-placeholder">Run pipeline to generate images.</div>`;
         variationsSpecsWrapper.style.display = "none";
@@ -544,6 +545,7 @@ document.addEventListener("DOMContentLoaded", () => {
         updateWorkspaceTokenUI();
         await promptForWorkspaceToken(previousToken, true);
         resetWorkspaceState();
+        loadCopywritingProfile();
         loadQueue();
         connectStatusStream();
     }
@@ -558,7 +560,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await promptForWorkspaceToken(userToken);
         await loadCopywritingModelOptions();
         loadSettings();
-        loadPresets();
+        loadCopywritingProfile();
         loadQueue();
         connectStatusStream();
     }
@@ -657,45 +659,276 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // --- LISTING PRESETS ---
-    function loadPresets() {
-        apiFetch("/api/listing-presets")
-            .then(r => r.json())
-            .then(data => {
-                presetShopIntro.value = data.shop_intro || "";
-                presetShippingNote.value = data.shipping_note || "";
-                presetMaterialsDisclaimer.value = data.materials_disclaimer || "";
-                presetCustomPolicy.value = data.custom_policy || "";
-                if (data.custom_prompt_rules !== undefined) {
-                    presetCustomPromptRules.value = data.custom_prompt_rules;
-                }
-            })
-            .catch(() => {}); // Silently fail if endpoint not yet available
+    // --- COPYWRITING PROFILE ---
+    const copywritingLabels = {
+        visual_facts: "Product Fact Extraction",
+        variation_specs: "Variation Specification Extraction",
+        seo_strategy: "SEO Strategy",
+        listing_draft: "Listing Draft",
+        quality_review: "Quality Review",
+        correction: "Correction Pass",
+        strict_qa_repair: "Strict QA Repair",
+        fix_title: "Fix Title",
+        fix_category: "Fix Category",
+        improve_tags: "Improve Tags",
+        safer_description: "Safer Description",
+        regenerate_description: "Regenerate Description",
+        regenerate_all: "Regenerate All Copy",
+        custom: "Custom Tweak"
+    };
+
+    function showCopywritingProfileStatus(message, type = "success") {
+        if (!copywritingProfileStatus) return;
+        copywritingProfileStatus.textContent = message;
+        copywritingProfileStatus.className = `settings-save-status ${type}`;
+        copywritingProfileStatus.hidden = false;
+        setTimeout(() => {
+            copywritingProfileStatus.hidden = true;
+        }, 5000);
     }
-    
-    if (btnResetRules) {
-        btnResetRules.addEventListener("click", () => {
-            presetCustomPromptRules.value = defaultCopywritingRules;
+
+    function createPromptEditor(key, value, group) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "copywriting-prompt-editor";
+        wrapper.innerHTML = `
+            <div class="settings-section-heading">
+                <div>
+                    <h3>${copywritingLabels[key] || key}</h3>
+                    <p>${group === "stage" ? "Runs as part of the main copywriting pipeline." : "Used by the matching Tweak Copy action."}</p>
+                </div>
+                <button type="button" class="text-action-btn" data-reset-prompt="${group}:${key}">Reset</button>
+            </div>
+            <textarea class="textarea-input code-textarea" data-copywriting-${group}="${key}"></textarea>
+        `;
+        wrapper.querySelector("textarea").value = value || "";
+        return wrapper;
+    }
+
+    function renderCopywritingProfile() {
+        if (!copywritingProfilePayload) return;
+        const profile = copywritingProfilePayload.profile;
+        const defaults = copywritingProfilePayload.defaults;
+        copywritingMasterRules.value = profile.master_rules || "";
+        copywritingBrandVoice.value = profile.brand_voice || "";
+        copywritingShopIntro.value = profile.listing_addons?.shop_intro || "";
+        copywritingShippingNote.value = profile.listing_addons?.shipping_note || "";
+        copywritingMaterialsDisclaimer.value = profile.listing_addons?.materials_disclaimer || "";
+        copywritingCustomPolicy.value = profile.listing_addons?.custom_policy || "";
+        copywritingProfileHash.textContent = `Profile ${copywritingProfilePayload.profile_hash || "unsaved"}`;
+
+        copywritingStageEditors.innerHTML = "";
+        (copywritingProfilePayload.stage_order || Object.keys(profile.stage_prompts || {})).forEach(key => {
+            copywritingStageEditors.appendChild(createPromptEditor(key, profile.stage_prompts?.[key], "stage"));
+        });
+        copywritingTweakEditors.innerHTML = "";
+        Object.entries(profile.tweak_prompts || {}).forEach(([key, value]) => {
+            copywritingTweakEditors.appendChild(createPromptEditor(key, value, "tweak"));
+        });
+
+        copywritingRiskControls.innerHTML = "";
+        Object.entries(copywritingProfilePayload.risk_definitions || {}).forEach(([key, definition]) => {
+            const control = profile.risk_controls?.[key] || {};
+            const card = document.createElement("div");
+            card.className = `risk-control-card ${control.override_enabled ? "override-enabled" : ""}`;
+            const valueField = definition.default_value !== undefined
+                ? `<div class="risk-value-row">
+                    <label class="field-label">Configured Value</label>
+                    <input type="number" min="1" class="text-input risk-value-input" data-risk-value="${key}" value="${control.value || definition.default_value}" ${control.override_enabled ? "" : "disabled"}>
+                   </div>`
+                : "";
+            card.innerHTML = `
+                <div class="risk-control-header">
+                    <div>
+                        <h3>${definition.label}</h3>
+                        <span class="risk-state-badge">${control.override_enabled ? "Risk Override Enabled" : "Safe Default"}</span>
+                    </div>
+                    <label class="switch-control">
+                        <input type="checkbox" data-risk-toggle="${key}" ${control.override_enabled ? "checked" : ""}>
+                        <span class="switch-track"></span>
+                    </label>
+                </div>
+                <p class="risk-warning">${definition.risk}</p>
+                ${valueField}
+                <label class="field-label">Override Instruction</label>
+                <textarea class="textarea-input risk-instruction" data-risk-instruction="${key}" ${control.override_enabled ? "" : "disabled"}></textarea>
+            `;
+            card.querySelector(`[data-risk-instruction="${key}"]`).value = control.instruction || definition.override_instruction || "";
+            copywritingRiskControls.appendChild(card);
+        });
+
+        copywritingPreviewStage.innerHTML = "";
+        [
+            ...(copywritingProfilePayload.stage_order || []),
+            ...Object.keys(profile.tweak_prompts || {})
+        ].forEach(key => {
+            const option = document.createElement("option");
+            option.value = key;
+            option.textContent = copywritingLabels[key] || key;
+            copywritingPreviewStage.appendChild(option);
+        });
+        copywritingTechnicalContract.innerHTML = "";
+        (copywritingProfilePayload.technical_contract || []).forEach(rule => {
+            const item = document.createElement("li");
+            item.textContent = rule;
+            copywritingTechnicalContract.appendChild(item);
+        });
+
+        document.querySelectorAll("[data-reset-prompt]").forEach(button => {
+            button.addEventListener("click", () => {
+                const [group, key] = button.dataset.resetPrompt.split(":");
+                const selector = `[data-copywriting-${group}="${key}"]`;
+                const defaultGroup = group === "stage" ? defaults.stage_prompts : defaults.tweak_prompts;
+                document.querySelector(selector).value = defaultGroup?.[key] || "";
+            });
         });
     }
 
-    btnSavePresets.addEventListener("click", () => {
-        const payload = {
-            shop_intro: presetShopIntro.value.trim(),
-            shipping_note: presetShippingNote.value.trim(),
-            materials_disclaimer: presetMaterialsDisclaimer.value.trim(),
-            custom_policy: presetCustomPolicy.value.trim(),
-            custom_prompt_rules: presetCustomPromptRules.value.trim()
+    function collectCopywritingProfile() {
+        const current = structuredClone(copywritingProfilePayload?.profile || {});
+        current.master_rules = copywritingMasterRules.value.trim();
+        current.brand_voice = copywritingBrandVoice.value.trim();
+        current.listing_addons = {
+            shop_intro: copywritingShopIntro.value.trim(),
+            shipping_note: copywritingShippingNote.value.trim(),
+            materials_disclaimer: copywritingMaterialsDisclaimer.value.trim(),
+            custom_policy: copywritingCustomPolicy.value.trim()
         };
-        apiFetch("/api/listing-presets", {
+        current.stage_prompts = current.stage_prompts || {};
+        document.querySelectorAll("[data-copywriting-stage]").forEach(input => {
+            current.stage_prompts[input.dataset.copywritingStage] = input.value.trim();
+        });
+        current.tweak_prompts = current.tweak_prompts || {};
+        document.querySelectorAll("[data-copywriting-tweak]").forEach(input => {
+            current.tweak_prompts[input.dataset.copywritingTweak] = input.value.trim();
+        });
+        current.risk_controls = current.risk_controls || {};
+        document.querySelectorAll("[data-risk-toggle]").forEach(toggle => {
+            const key = toggle.dataset.riskToggle;
+            current.risk_controls[key] = {
+                ...(current.risk_controls[key] || {}),
+                override_enabled: toggle.checked,
+                instruction: document.querySelector(`[data-risk-instruction="${key}"]`)?.value.trim() || ""
+            };
+            const valueInput = document.querySelector(`[data-risk-value="${key}"]`);
+            if (valueInput) current.risk_controls[key].value = Math.max(1, Number(valueInput.value) || 1);
+        });
+        return current;
+    }
+
+    async function loadCopywritingProfile() {
+        try {
+            const response = await apiFetch("/api/copywriting-profile");
+            if (!response.ok) throw new Error("Could not load copywriting profile");
+            copywritingProfilePayload = await response.json();
+            renderCopywritingProfile();
+        } catch (error) {
+            if (copywritingProfileHash) {
+                copywritingProfileHash.textContent = "Profile unavailable";
+            }
+            showCopywritingProfileStatus(error.message, "error");
+        }
+    }
+
+    async function saveCopywritingProfile() {
+        btnSaveCopywritingProfile.disabled = true;
+        try {
+            const response = await apiFetch("/api/copywriting-profile", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ profile: collectCopywritingProfile() })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.detail || "Could not save copywriting profile");
+            copywritingProfilePayload = payload;
+            renderCopywritingProfile();
+            showCopywritingProfileStatus("Workspace copywriting profile saved.");
+        } catch (error) {
+            showCopywritingProfileStatus(error.message, "error");
+        } finally {
+            btnSaveCopywritingProfile.disabled = false;
+        }
+    }
+
+    async function resetCopywritingProfile() {
+        const confirmed = await openModal({
+            title: "Reset Copywriting Profile",
+            message: "Restore every copywriting prompt, risk control, and listing add-on to the application defaults?",
+            confirmText: "Reset All",
+            danger: true
+        });
+        if (!confirmed) return;
+        const response = await apiFetch("/api/copywriting-profile/reset", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        }).then(r => r.json()).then(() => {
-            presetsStatus.style.display = "block";
-            setTimeout(() => presetsStatus.style.display = "none", 3000);
+            body: JSON.stringify({ section: "" })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            showCopywritingProfileStatus(payload.detail || "Reset failed", "error");
+            return;
+        }
+        copywritingProfilePayload = payload;
+        renderCopywritingProfile();
+        showCopywritingProfileStatus("Copywriting profile reset to defaults.");
+    }
+
+    async function previewCopywritingPrompt() {
+        btnPreviewCopywritingPrompt.disabled = true;
+        copywritingPromptPreview.textContent = "Compiling prompt...";
+        try {
+            const response = await apiFetch("/api/copywriting-prompt-preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    stage_key: copywritingPreviewStage.value,
+                    profile: collectCopywritingProfile()
+                })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.detail || "Prompt preview failed");
+            copywritingPromptPreview.textContent = payload.prompt || "";
+        } catch (error) {
+            copywritingPromptPreview.textContent = error.message;
+        } finally {
+            btnPreviewCopywritingPrompt.disabled = false;
+        }
+    }
+
+    copywritingSettingsTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            copywritingSettingsTabs.forEach(item => item.classList.toggle("active", item === tab));
+            document.querySelectorAll(".copywriting-settings-panel").forEach(panel => {
+                panel.classList.toggle("active", panel.id === `copywriting-panel-${tab.dataset.copywritingPanel}`);
+            });
         });
     });
+
+    if (copywritingRiskControls) {
+        copywritingRiskControls.addEventListener("change", async event => {
+            const toggle = event.target.closest("[data-risk-toggle]");
+            if (!toggle) return;
+            if (toggle.checked) {
+                const definition = copywritingProfilePayload?.risk_definitions?.[toggle.dataset.riskToggle];
+                const confirmed = await openModal({
+                    title: "Enable Risk Override",
+                    message: `${definition?.risk || "This can make output less Etsy-safe."}\n\nThe pipeline will preserve this choice during generation, QA, cleanup, and tweaks.`,
+                    confirmText: "Enable Override",
+                    danger: true
+                });
+                if (!confirmed) toggle.checked = false;
+            }
+            const card = toggle.closest(".risk-control-card");
+            card.classList.toggle("override-enabled", toggle.checked);
+            card.querySelector(".risk-state-badge").textContent = toggle.checked ? "Risk Override Enabled" : "Safe Default";
+            card.querySelectorAll(".risk-instruction, .risk-value-input").forEach(input => {
+                input.disabled = !toggle.checked;
+            });
+        });
+    }
+
+    if (btnSaveCopywritingProfile) btnSaveCopywritingProfile.addEventListener("click", saveCopywritingProfile);
+    if (btnResetCopywritingProfile) btnResetCopywritingProfile.addEventListener("click", resetCopywritingProfile);
+    if (btnPreviewCopywritingPrompt) btnPreviewCopywritingPrompt.addEventListener("click", previewCopywritingPrompt);
 
     // --- IMAGE GENERATION TASKS & PRESETS ---
     const presetSelector = document.getElementById("preset-selector");
@@ -2211,6 +2444,15 @@ document.addEventListener("DOMContentLoaded", () => {
         panel.className = "listing-preview-panel";
         const generatedImages = Array.isArray(item.generated_images) ? item.generated_images : [];
         const generatedCount = generatedImages.map(getImagePath).filter(Boolean).length;
+        const compatibilityIssues = Array.isArray(listing.etsy_compatibility_issues)
+            ? listing.etsy_compatibility_issues
+            : [];
+        const compatibilityHtml = listing.etsy_compatible === false || compatibilityIssues.length
+            ? `<div class="etsy-compatibility-banner">
+                <strong>Not Etsy Compatible</strong>
+                <span>${compatibilityIssues.join(" ") || "Enabled overrides produced fields outside Etsy's normal limits."}</span>
+               </div>`
+            : "";
 
         const tags = listing.tags || [];
         const tagsHtml = tags.length > 0
@@ -2221,6 +2463,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="preview-action-row">
                 <button type="button" class="secondary-btn preview-tweak-btn" data-action="tweak-copy">Tweak Copy</button>
             </div>
+            ${compatibilityHtml}
             <div class="preview-grid-top">
                 <div class="preview-left-col">
                     <div class="preview-field">
@@ -2735,6 +2978,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --- EDITOR ---
+    function renderEtsyCompatibility(listing) {
+        if (!etsyCompatibilityBanner) return;
+        const issues = Array.isArray(listing?.etsy_compatibility_issues)
+            ? listing.etsy_compatibility_issues
+            : [];
+        if (listing?.etsy_compatible !== false && issues.length === 0) {
+            etsyCompatibilityBanner.hidden = true;
+            etsyCompatibilityBanner.innerHTML = "";
+            return;
+        }
+        etsyCompatibilityBanner.hidden = false;
+        etsyCompatibilityBanner.innerHTML = `
+            <strong>Not Etsy Compatible</strong>
+            <span>${issues.join(" ") || "One or more enabled overrides produced fields outside Etsy's normal limits."}</span>
+        `;
+    }
+
     function populateWorkspace() {
         if (!activeListing) return;
         workspace.classList.remove("disabled");
@@ -2751,6 +3011,7 @@ document.addEventListener("DOMContentLoaded", () => {
         etsyDesc.value = activeListing.description || "";
 
         renderTags(activeListing.tags || []);
+        renderEtsyCompatibility(activeListing);
     }
 
     function populateVariationSpecs(item) {

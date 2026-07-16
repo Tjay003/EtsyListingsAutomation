@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=27-generated-image-viewer">
+    <link rel="stylesheet" href="style.css?v=28-copywriting-control-center">
 </head>
 <body>
     <div class="app-container">
@@ -235,6 +235,7 @@
                     </div>
                     
                     <div id="listing-workspace" class="listing-workspace disabled">
+                        <div id="etsy-compatibility-banner" class="etsy-compatibility-banner" hidden></div>
                         <div class="input-group">
                             <label class="field-label">Optimized Etsy Title</label>
                             <input type="text" id="etsy-title" class="text-input font-bold" readonly>
@@ -282,71 +283,134 @@
             </section>
 
             <!-- SETTINGS PANEL -->
-            <section id="panel-settings" class="main-panel settings-panel" style="padding: 24px; height: 100%;">
-                <div style="display: flex; gap: 24px; height: 100%;">
-                    
-                    <!-- LEFT SIDE: Global Settings -->
-                    <div class="card" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; height: fit-content;">
+            <section id="panel-settings" class="main-panel settings-panel">
+                <div class="settings-shell">
+                    <aside class="card settings-global-card">
                         <h2 class="panel-title">Global Settings</h2>
-                        
                         <div class="input-group">
-                            <label class="field-label">Local Output Directory</label>
+                            <label class="field-label" for="setting-output-dir">Local Output Directory</label>
                             <input type="text" id="setting-output-dir" class="text-input" placeholder="C:\path\to\save\products">
-                            <small style="color: var(--neutral-grey); margin-top: 4px; display: block; font-size: 11px;">
-                                Where images, zips, and metadata are saved locally.
-                            </small>
+                            <p class="field-hint">Where images, exports, metadata, and workspace copywriting profiles are stored.</p>
                         </div>
-                        
-                        <div>
-                            <button id="btn-save-settings" class="primary-btn" style="width: 100%;">Save Settings</button>
-                            <div id="settings-status" style="margin-top: 12px; color: #45D070; font-size: 12px; display: none; text-align: center;">Saved successfully!</div>
-                        </div>
-                    </div>
+                        <button id="btn-save-settings" class="primary-btn">Save Directory</button>
+                        <div id="settings-status" class="settings-save-status" style="display: none;">Saved successfully.</div>
+                    </aside>
 
-                    <!-- RIGHT SIDE: Presets & Rules -->
-                    <div class="card" style="flex: 1; display: flex; flex-direction: column; overflow-y: auto;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--bg-canvas); padding-bottom: 12px; margin-bottom: 20px;">
-                            <h2 class="panel-title" style="border: none; margin: 0; padding: 0;">Listing Description Add-ons</h2>
-                            <button id="btn-save-presets" class="primary-btn">Save Add-ons</button>
-                        </div>
-                        <p class="presets-hint">These instructions and blurbs are injected into every AI-generated listing.</p>
-                        <div id="presets-status" style="margin-bottom: 12px; color: #45D070; font-size: 12px; display: none;">Add-ons saved successfully!</div>
-
-                        <!-- AI Copywriting Rules -->
-                        <div class="input-group" style="background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 24px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <label class="field-label" style="margin: 0;">AI Copywriting Rules <span class="preset-badge" style="background: var(--primary); color: var(--card-bg);">System Prompt</span></label>
-                                <button id="btn-reset-rules" class="secondary-btn" style="padding: 4px 10px; font-size: 11px;">Reset to Default</button>
+                    <div class="card copywriting-settings-card">
+                        <div class="copywriting-settings-header">
+                            <div>
+                                <span class="pipeline-section-kicker">Workspace Configuration</span>
+                                <h2 class="panel-title">Copywriting Control Center</h2>
+                                <p class="presets-hint">Every editorial instruction used by generation, review, repair, and tweaks is visible here.</p>
                             </div>
-                            <textarea id="preset-custom-prompt-rules" class="textarea-input preset-textarea" style="min-height: 250px; font-family: monospace; font-size: 12px; line-height: 1.4;" placeholder="e.g. Do not mention China. Keep it professional."></textarea>
-                            <small style="color: var(--neutral-grey); margin-top: 6px; display: block; font-size: 11px;">
-                                These instructions strictly guide how the AI writes the Title, Description, and Tags.
-                            </small>
-                        </div>
-
-                        <!-- Additional Blurbs -->
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                            <div class="input-group">
-                                <label class="field-label">Shop Intro Blurb <span class="preset-badge">Prepended</span></label>
-                                <textarea id="preset-shop-intro" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Welcome to our shop! We ship worldwide with care..."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label class="field-label">Shipping Note <span class="preset-badge">Appended</span></label>
-                                <textarea id="preset-shipping-note" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Ships from overseas. Estimated delivery: 15-25 business days."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label class="field-label">Materials Disclaimer <span class="preset-badge">Appended</span></label>
-                                <textarea id="preset-materials-disclaimer" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="e.g. Colors may slightly vary due to monitor display settings."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label class="field-label">Custom Policy <span class="preset-badge">Replaces Default</span></label>
-                                <textarea id="preset-custom-policy" class="textarea-input preset-textarea" style="min-height: 120px;" placeholder="Leave blank to use default cancellation & returns policy."></textarea>
+                            <div class="copywriting-settings-actions">
+                                <span id="copywriting-profile-hash" class="profile-hash">Loading profile...</span>
+                                <button type="button" id="btn-reset-copywriting-profile" class="secondary-btn">Reset All</button>
+                                <button type="button" id="btn-save-copywriting-profile" class="primary-btn">Save Profile</button>
                             </div>
                         </div>
+                        <div id="copywriting-profile-status" class="settings-save-status" hidden></div>
 
+                        <div class="copywriting-settings-tabs" role="tablist">
+                            <button type="button" class="copywriting-settings-tab active" data-copywriting-panel="basic">Basic</button>
+                            <button type="button" class="copywriting-settings-tab" data-copywriting-panel="stages">Advanced Stages</button>
+                            <button type="button" class="copywriting-settings-tab" data-copywriting-panel="risks">Risk Overrides</button>
+                            <button type="button" class="copywriting-settings-tab" data-copywriting-panel="inspector">Prompt Inspector</button>
+                        </div>
+
+                        <div id="copywriting-panel-basic" class="copywriting-settings-panel active">
+                            <div class="settings-section-block">
+                                <div class="settings-section-heading">
+                                    <div>
+                                        <h3>Master Instructions</h3>
+                                        <p>These rules apply to every copywriting stage.</p>
+                                    </div>
+                                    <span class="preset-badge">Editable</span>
+                                </div>
+                                <textarea id="copywriting-master-rules" class="textarea-input code-textarea"></textarea>
+                            </div>
+                            <div class="settings-section-block">
+                                <div class="settings-section-heading">
+                                    <div>
+                                        <h3>Brand Voice</h3>
+                                        <p>Define the default personality, energy, and shopper-facing tone.</p>
+                                    </div>
+                                </div>
+                                <textarea id="copywriting-brand-voice" class="textarea-input preset-textarea"></textarea>
+                            </div>
+                            <div class="settings-section-block">
+                                <div class="settings-section-heading">
+                                    <div>
+                                        <h3>Listing Add-ons</h3>
+                                        <p>These are inserted after AI generation.</p>
+                                    </div>
+                                </div>
+                                <div class="copywriting-addon-grid">
+                                    <div class="input-group">
+                                        <label class="field-label" for="copywriting-shop-intro">Shop Intro</label>
+                                        <textarea id="copywriting-shop-intro" class="textarea-input preset-textarea"></textarea>
+                                    </div>
+                                    <div class="input-group">
+                                        <label class="field-label" for="copywriting-shipping-note">Shipping Note</label>
+                                        <textarea id="copywriting-shipping-note" class="textarea-input preset-textarea"></textarea>
+                                    </div>
+                                    <div class="input-group">
+                                        <label class="field-label" for="copywriting-materials-disclaimer">Materials Disclaimer</label>
+                                        <textarea id="copywriting-materials-disclaimer" class="textarea-input preset-textarea"></textarea>
+                                    </div>
+                                    <div class="input-group">
+                                        <label class="field-label" for="copywriting-custom-policy">Custom Policy</label>
+                                        <textarea id="copywriting-custom-policy" class="textarea-input preset-textarea"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="copywriting-panel-stages" class="copywriting-settings-panel">
+                            <div class="settings-section-heading">
+                                <div>
+                                    <h3>AI Stage Instructions</h3>
+                                    <p>Edit the purpose and behavior of each stage. Product data and JSON contracts are attached separately.</p>
+                                </div>
+                            </div>
+                            <div id="copywriting-stage-editors" class="copywriting-editor-list"></div>
+                            <div class="settings-section-heading tweak-prompts-heading">
+                                <div>
+                                    <h3>Copy Tweak Presets</h3>
+                                    <p>These instructions power the quick-fix actions in the listing editor.</p>
+                                </div>
+                            </div>
+                            <div id="copywriting-tweak-editors" class="copywriting-editor-list"></div>
+                        </div>
+
+                        <div id="copywriting-panel-risks" class="copywriting-settings-panel">
+                            <div class="risk-panel-intro">
+                                <strong>Safe defaults are active until you explicitly unlock a rule.</strong>
+                                <p>Overrides can create inaccurate claims, policy exposure, or Etsy-incompatible fields. Each switch changes generation, QA, cleanup, and tweaks together.</p>
+                            </div>
+                            <div id="copywriting-risk-controls" class="risk-control-grid"></div>
+                        </div>
+
+                        <div id="copywriting-panel-inspector" class="copywriting-settings-panel">
+                            <div class="prompt-inspector-toolbar">
+                                <div class="input-group">
+                                    <label class="field-label" for="copywriting-preview-stage">Prompt Stage</label>
+                                    <select id="copywriting-preview-stage" class="select-input"></select>
+                                </div>
+                                <button type="button" id="btn-preview-copywriting-prompt" class="secondary-btn">Compile Prompt</button>
+                            </div>
+                            <pre id="copywriting-prompt-preview" class="prompt-preview-box">Choose a stage to inspect the compiled prompt.</pre>
+                            <div class="technical-contract-box">
+                                <div class="settings-section-heading">
+                                    <div>
+                                        <h3>Technical Output Contract</h3>
+                                        <p>These application requirements are visible but cannot be disabled.</p>
+                                    </div>
+                                    <span class="preset-badge">Read Only</span>
+                                </div>
+                                <ul id="copywriting-technical-contract"></ul>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -508,6 +572,6 @@
             </div>
         </div>
     </div>
-    <script src="app.js?v=25-generated-image-viewer"></script>
+    <script src="app.js?v=27-copywriting-profile-fallback"></script>
 </body>
 </html>

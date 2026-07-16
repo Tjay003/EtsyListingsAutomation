@@ -121,3 +121,386 @@
     from { opacity: 0; transform: translateY(-6px); }
     to   { opacity: 1; transform: translateY(0); }
 }
+
+/* Copywriting control center */
+.settings-panel {
+    padding: 24px;
+    height: 100%;
+}
+
+.settings-shell {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+    min-height: 100%;
+}
+
+.settings-global-card {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.settings-save-status {
+    padding: 10px 12px;
+    border: 1px solid #45d070;
+    border-radius: 6px;
+    color: #16743a;
+    background: #effcf3;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.settings-save-status.error {
+    border-color: #d83030;
+    color: #a51f1f;
+    background: #fff1f1;
+}
+
+.copywriting-settings-card {
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.copywriting-settings-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    align-items: flex-start;
+    padding: 24px;
+    border-bottom: 1.5px solid var(--border-color);
+}
+
+.copywriting-settings-header .panel-title {
+    margin: 6px 0 4px;
+    padding: 0;
+    border: 0;
+}
+
+.copywriting-settings-header .presets-hint {
+    margin: 0;
+}
+
+.copywriting-settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.profile-hash {
+    color: var(--neutral-grey);
+    font: 600 10px/1.3 monospace;
+    text-transform: uppercase;
+}
+
+#copywriting-profile-status {
+    margin: 16px 24px 0;
+}
+
+.copywriting-settings-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 14px 24px 0;
+    border-bottom: 1.5px solid var(--border-color);
+    overflow-x: auto;
+}
+
+.copywriting-settings-tab {
+    appearance: none;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    padding: 11px 14px;
+    color: var(--neutral-grey);
+    font: 700 12px/1 var(--font-stack);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.copywriting-settings-tab:hover,
+.copywriting-settings-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.copywriting-settings-panel {
+    display: none;
+    padding: 24px;
+}
+
+.copywriting-settings-panel.active {
+    display: block;
+    animation: fadeIn 0.18s ease-out;
+}
+
+.settings-section-block,
+.copywriting-prompt-editor,
+.technical-contract-box {
+    padding: 18px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--card-bg);
+}
+
+.settings-section-block + .settings-section-block,
+.copywriting-prompt-editor + .copywriting-prompt-editor {
+    margin-top: 16px;
+}
+
+.settings-section-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.settings-section-heading h3,
+.risk-control-header h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+}
+
+.settings-section-heading p,
+.risk-control-header p {
+    margin: 0;
+    color: var(--neutral-grey);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.code-textarea {
+    min-height: 150px;
+    font: 12px/1.55 Consolas, "Courier New", monospace;
+}
+
+.copywriting-addon-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.copywriting-editor-list {
+    display: grid;
+    gap: 14px;
+}
+
+.tweak-prompts-heading {
+    margin-top: 28px;
+}
+
+.text-action-btn {
+    border: 0;
+    background: transparent;
+    color: var(--neutral-grey);
+    font: 700 11px/1 var(--font-stack);
+    cursor: pointer;
+}
+
+.text-action-btn:hover {
+    color: var(--primary);
+}
+
+.risk-panel-intro {
+    padding: 16px;
+    margin-bottom: 18px;
+    border: 1.5px solid #d6a72b;
+    border-radius: 8px;
+    background: #fff8df;
+}
+
+.risk-panel-intro p {
+    margin: 5px 0 0;
+    color: #6f5818;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.risk-control-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.risk-control-card {
+    padding: 16px;
+    border: 1.5px solid var(--border-color);
+    border-left: 5px solid #45a265;
+    border-radius: 8px;
+    background: var(--card-bg);
+}
+
+.risk-control-card.override-enabled {
+    border-color: #d83030;
+    border-left-color: #d83030;
+    background: #fff7f7;
+}
+
+.risk-control-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.risk-state-badge {
+    display: inline-block;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #e9f8ee;
+    color: #257242;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.override-enabled .risk-state-badge {
+    background: #ffe1e1;
+    color: #b31f1f;
+}
+
+.risk-warning {
+    min-height: 48px;
+    margin: 12px 0;
+    color: var(--neutral-grey);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.risk-instruction {
+    min-height: 110px;
+    font-size: 12px;
+}
+
+.risk-value-row {
+    margin-bottom: 12px;
+}
+
+.switch-control {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.switch-control input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.switch-track {
+    width: 42px;
+    height: 24px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 12px;
+    background: #d8d8d8;
+    cursor: pointer;
+    transition: 0.15s ease;
+}
+
+.switch-track::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 4px;
+    left: 4px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: 0.15s ease;
+}
+
+.switch-control input:checked + .switch-track {
+    background: #d83030;
+    border-color: #a91e1e;
+}
+
+.switch-control input:checked + .switch-track::after {
+    transform: translateX(18px);
+}
+
+.prompt-inspector-toolbar {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.prompt-inspector-toolbar .input-group {
+    flex: 1;
+}
+
+.prompt-preview-box {
+    min-height: 420px;
+    max-height: 620px;
+    margin: 0 0 18px;
+    padding: 18px;
+    overflow: auto;
+    white-space: pre-wrap;
+    border: 1.5px solid var(--border-color);
+    border-radius: 8px;
+    background: #151515;
+    color: #f5f5f5;
+    font: 12px/1.55 Consolas, "Courier New", monospace;
+}
+
+.technical-contract-box ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--neutral-grey);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.etsy-compatibility-banner {
+    padding: 12px 14px;
+    border: 1.5px solid #d83030;
+    border-radius: 7px;
+    background: #fff0f0;
+    color: #9e2020;
+    font-size: 12px;
+}
+
+.etsy-compatibility-banner strong {
+    display: block;
+    margin-bottom: 3px;
+}
+
+@media (max-width: 1100px) {
+    .settings-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-global-card {
+        position: static;
+    }
+
+    .risk-control-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 700px) {
+    .settings-panel,
+    .copywriting-settings-panel,
+    .copywriting-settings-header {
+        padding: 16px;
+    }
+
+    .copywriting-settings-header,
+    .prompt-inspector-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .copywriting-addon-grid {
+        grid-template-columns: 1fr;
+    }
+}

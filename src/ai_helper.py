@@ -9,6 +9,15 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List
 from dotenv import load_dotenv
+from src.copywriting_config import (
+    build_active_policy,
+    effective_limit,
+    get_etsy_compatibility,
+    get_listing_addons,
+    get_tweak_instruction,
+    normalize_copywriting_profile,
+    risk_override_enabled,
+)
 
 # Optional OpenAI fallback import
 try:
@@ -86,6 +95,7 @@ COPYWRITING_MODEL_OPTIONS = [
 ]
 _OPENAI_MODEL_KEYS = {model["key"] for model in COPYWRITING_MODEL_OPTIONS}
 _OPENAI_MODEL_OVERRIDE = ContextVar("openai_model_override", default="")
+_COPYWRITING_PROFILE_OVERRIDE = ContextVar("copywriting_profile_override", default=None)
 
 def normalize_openai_model(model_key: str | None = None) -> str:
     requested = str(model_key or "").strip()
@@ -108,6 +118,15 @@ def set_openai_model_override(model_key: str | None = None):
 def reset_openai_model_override(token):
     _OPENAI_MODEL_OVERRIDE.reset(token)
 
+def get_copywriting_profile() -> dict:
+    return normalize_copywriting_profile(_COPYWRITING_PROFILE_OVERRIDE.get())
+
+def set_copywriting_profile_override(profile: dict | None = None):
+    return _COPYWRITING_PROFILE_OVERRIDE.set(normalize_copywriting_profile(profile))
+
+def reset_copywriting_profile_override(token):
+    _COPYWRITING_PROFILE_OVERRIDE.reset(token)
+
 def openai_model_uses_responses(model_key: str) -> bool:
     return model_key.startswith("gpt-5.6-")
 
@@ -120,45 +139,48 @@ def get_copywriting_model_options() -> dict:
 # Define the structured output format for the Etsy listing
 class SEOStrategy(BaseModel):
     primary_product_noun: str = Field(default="", description="Plain product noun buyers would search, e.g. crossbody bag, ceramic mug")
-    top_traits: List[str] = Field(default_factory=list, description="Objective traits from source facts such as color, material, size, style, shape")
+    top_traits: List[str] = Field(default_factory=list, description="Product traits selected according to the active workspace profile")
     buyer_intents: List[str] = Field(default_factory=list, description="Realistic buyer intents or use cases for this product")
-    audience: List[str] = Field(default_factory=list, description="Relevant audience segments only when supported by the product")
+    audience: List[str] = Field(default_factory=list, description="Audience segments selected according to the active workspace profile")
     primary_keywords: List[str] = Field(default_factory=list, description="Most important buyer search phrases for Etsy")
     long_tail_keywords: List[str] = Field(default_factory=list, description="Specific multi-word phrases likely to convert")
-    tag_keywords: List[str] = Field(default_factory=list, description="Candidate Etsy tags, preferably 20 characters or less")
+    tag_keywords: List[str] = Field(default_factory=list, description="Candidate listing tag phrases")
 
 class EtsyListing(BaseModel):
-    title: str = Field(description="One Etsy-ready marketplace title, maximum 140 characters")
-    description: str = Field(description="Etsy product description with a safe lifestyle/story opening followed by confirmed product details. Make sure to use double newlines (\\n\\n) between paragraphs, features, and specs to avoid a single dense block of text.")
-    tags: List[str] = Field(description="13 relevant search keywords or short tag phrases for Etsy listings")
-    suggested_price: str = Field(description="Suggested Etsy retail price in USD, e.g., '$24.99'")
-    category: str = Field(description="The most accurate Etsy category path or specific category name (e.g., 'Home & Living > Home Decor' or 'Crossbody Bags')")
+    title: str = Field(description="Marketplace listing title following the active workspace profile")
+    description: str = Field(description="Product description following the active workspace profile")
+    tags: List[str] = Field(description="Search tags following the active workspace profile")
+    suggested_price: str = Field(description="Suggested retail price")
+    category: str = Field(description="Marketplace category or category path")
     seo_strategy: SEOStrategy = Field(default_factory=SEOStrategy, description="Keyword and positioning strategy used to write the listing")
     seo_quality_score: int = Field(default=0, description="Deterministic SEO QA score from 0 to 100")
     seo_qa_notes: List[str] = Field(default_factory=list, description="Issues or warnings from deterministic SEO QA")
     repair_instructions: List[str] = Field(default_factory=list, description="Exact deterministic repairs required before the listing is publication-ready")
     needs_review: bool = Field(default=False, description="True when deterministic QA found issues that should be checked before publishing")
     review_reasons: List[str] = Field(default_factory=list, description="Short human review reasons")
+    etsy_compatible: bool = Field(default=True, description="False when intentional overrides produce fields that do not fit Etsy limits")
+    etsy_compatibility_issues: List[str] = Field(default_factory=list, description="Etsy field-limit warnings")
+    enabled_risk_overrides: List[str] = Field(default_factory=list, description="Workspace risk overrides active for this listing")
 
 class VisualSpecs(BaseModel):
-    dimensions: str = Field(description="Exact measurements extracted from text/labels in the images, or empty string if not clearly shown")
-    materials: str = Field(description="Materials labeled or clearly described, or empty string if not clearly shown")
-    colors: str = Field(description="Exact colors or variations, or empty string if not clearly shown")
-    capacity: str = Field(description="Capacity details (e.g. holds A4/laptop), or empty string if not clearly shown")
-    other_specs: str = Field(description="Any other printed specifications, or empty string if not clearly shown")
-    visual_style: str = Field(description="Brief physical appearance description (e.g. woven texture, hollow-out design, wood base, strap style), or empty string if not clearly shown")
+    dimensions: str = Field(description="Measurements identified according to the active workspace profile")
+    materials: str = Field(description="Materials identified according to the active workspace profile")
+    colors: str = Field(description="Colors or variations identified according to the active workspace profile")
+    capacity: str = Field(description="Capacity details identified according to the active workspace profile")
+    other_specs: str = Field(description="Other useful specifications")
+    visual_style: str = Field(description="Physical appearance and style description")
 
 class VariationSpec(BaseModel):
     name: str = Field(description="The name or label of this variation (e.g., 'Color: Red', 'Beige')")
-    size: str = Field(description="Detected size name (e.g., 'S', 'M', 'L', 'Small', '30x40cm'), or empty if not applicable or not found")
-    dimensions: str = Field(description="Specific measurements for this variation (e.g., '38cm x 28cm x 10cm', '12 inches'), or empty if not clearly determined")
-    other_details: str = Field(description="Any other features specific to this variation (e.g., material, pattern, weight capacity), or empty")
+    size: str = Field(description="Size name identified for this variation")
+    dimensions: str = Field(description="Measurements identified for this variation")
+    other_details: str = Field(description="Other details identified for this variation")
 
 class VariationListSpecs(BaseModel):
     variations: List[VariationSpec] = Field(description="List of detected specifications for each variation option in the exact same order as input")
 
 class ReviewVerdict(BaseModel):
-    approved: bool = Field(description="True if the listing meets all quality guidelines, has no hallucinations, and aligns with visual specifications, False otherwise")
+    approved: bool = Field(description="True if the listing follows the active workspace profile")
     title_issues: str = Field(description="Feedback/issues about title quality, or empty string if perfect")
     description_issues: str = Field(description="Feedback/issues about description (e.g., missing dimensions or incorrect facts), or empty string if perfect")
     tag_issues: str = Field(description="Feedback/issues about tags (length, quantity, search relevance), or empty string if perfect")
@@ -289,6 +311,7 @@ def generate_description_from_images(image_paths, client=None):
         return "No visual description available (no images downloaded)."
         
     prompt = (
+        f"{build_active_policy(get_copywriting_profile(), 'visual_facts')}\n\n"
         "Analyze these product images and compile a detailed description of the product. "
         "IMPORTANT: If any of these images contain a size chart, dimension diagram, measurement overlay, "
         "or specifications table, look at it closely, read the text inside it, and extract the exact "
@@ -367,14 +390,9 @@ def extract_visual_specs(image_paths, client=None):
         return {}
         
     prompt = (
-        "Analyze these product images carefully. Extract key specifications and facts to help generate an Etsy listing.\n"
-        "STRICT CONFORMANCE RULES (NO GUESSING):\n"
-        "1. DIMENSIONS: Only extract exact measurements (height, width, depth, capacity, weight limit, drop length, etc.) if they are clearly printed as text/diagrams in the images. If not clearly shown, leave this field as an empty string. DO NOT guess, estimate, or approximate.\n"
-        "2. MATERIALS: Only extract materials (e.g. wool, canvas, alloy) if they are explicitly printed or clearly labeled. If not explicitly shown, leave as an empty string. DO NOT infer materials from appearance alone.\n"
-        "3. COLORS: Extract the exact color names shown in variations or text labels. If not shown, leave empty.\n"
-        "4. CAPACITY: Extract specific capacity info (e.g. fits a 13-inch laptop, fits A4 documents) only if explicitly labeled. Otherwise leave empty.\n"
-        "5. OTHER SPECS: Any other printed specifications/tables shown in the images. Otherwise leave empty.\n"
-        "6. VISUAL STYLE: Briefly describe the actual appearance of the product (texture, woven/smooth, shape) to help write the description.\n"
+        f"{build_active_policy(get_copywriting_profile(), 'visual_facts')}\n\n"
+        "Analyze these product images carefully and return dimensions, materials, colors, capacity, "
+        "other specifications, and visual style according to the active workspace rules.\n"
         "\nOutput your response strictly as a JSON object matching the requested schema."
     )
     
@@ -435,7 +453,8 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
     desc_part = scraped_desc or "None provided"
 
     prompt = (
-        "You are an expert product spec analyzer. Analyze the variation options for this product.\n"
+        f"{build_active_policy(get_copywriting_profile(), 'variation_specs')}\n\n"
+        "Analyze the variation options for this product.\n"
         "Your task is to detect the specific size and measurements/dimensions for EACH variation listed below.\n\n"
         "CONTEXT:\n"
         f"1. Overall Product Specifications & Size Charts:\n{specs_part}\n\n"
@@ -450,13 +469,13 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
         prompt += f"- Index {idx}: Name/Label = '{name}'\n"
 
     prompt += (
-        "\nSTRICT CONFORMANCE & MAPPING RULES:\n"
+        "\nMAPPING RULES:\n"
         "1. Order: You MUST return the variation specifications in the exact same index order as the input list.\n"
         "2. Name Match: Set the 'name' field in each result item to the corresponding Name/Label from the variation list.\n"
         "3. Size Extraction: Look at the variation's name/label. If it contains a size indicator (e.g. 'S', 'M', 'L', 'XL', '20cm', 'small'), set the 'size' field.\n"
         "4. Dimension Matching: Cross-reference the variation's size name with any size charts in the CONTEXT. If the size chart lists measurements for that size (e.g. S: 38x28cm), extract and assign those measurements to the 'dimensions' field of that variation.\n"
         "5. Image Extraction: Below are the variation images. If a variation image itself contains printed text displaying specific sizes, dimensions, or measurements (e.g. a diagram showing the size), extract those measurements for that variation.\n"
-        "6. No Guessing: If you cannot determine any size or dimensions for a variation, leave those fields as empty strings. DO NOT guess or approximate.\n"
+        "6. Follow the active factual and inference policies when information is uncertain.\n"
         "\nOutput your response strictly as a JSON object matching the requested schema."
     )
 
@@ -547,17 +566,21 @@ def extract_variation_specs(variations, product_dir, overall_specs, scraped_desc
         return fallback
 
 def clean_tags(tags, client):
-    """Ensure all tags are under 20 characters, split/condensing any that exceed the limit."""
+    """Normalize tags according to the active workspace profile."""
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     if not isinstance(tags, list):
         tags = []
         
+    profile = get_copywriting_profile()
+    max_chars = effective_limit(profile, "etsy_tag_length")
+    target_count = effective_limit(profile, "etsy_tag_count")
+    preserve_long_tags = risk_override_enabled(profile, "etsy_tag_length")
     openai_client = get_openai_client()
     cleaned = []
     for tag in tags:
         tag = tag.strip().lower()
-        if len(tag) <= 20:
+        if len(tag) <= max_chars or preserve_long_tags:
             cleaned.append(tag)
         else:
             print(f"Tag too long ({len(tag)} chars): '{tag}'. Condensing...")
@@ -565,9 +588,9 @@ def clean_tags(tags, client):
             # Try OpenAI first if configured
             if openai_client:
                 try:
-                    prompt = f"Shorten this keyword phrase to be under 20 characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
+                    prompt = f"Shorten this keyword phrase to be under {max_chars} characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
                     short_tag = openai_generate_content(openai_client, prompt, max_tokens=20).strip().replace('"', '').replace("'", "")
-                    if len(short_tag) <= 20:
+                    if len(short_tag) <= max_chars:
                         cleaned.append(short_tag)
                         print(f"Condensed tag via OpenAI: '{tag}' -> '{short_tag}'")
                         continue
@@ -576,24 +599,24 @@ def clean_tags(tags, client):
             
             # Fallback to Gemini
             try:
-                prompt = f"Shorten this keyword phrase to be under 20 characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
+                prompt = f"Shorten this keyword phrase to be under {max_chars} characters (including spaces) for Etsy tags, keeping its search relevance. Output ONLY the shortened phrase, no quotes, no extra words:\n{tag}"
                 response = generate_content_with_retry(
                     client=client,
                     model=GEMINI_MODEL,
                     contents=prompt
                 )
                 short_tag = response.text.strip().replace('"', '').replace("'", "")
-                if len(short_tag) <= 20:
+                if len(short_tag) <= max_chars:
                     cleaned.append(short_tag)
                     print(f"Condensed tag: '{tag}' -> '{short_tag}'")
                 else:
                     # Hard fallback: truncate
-                    truncated = tag[:20].strip()
+                    truncated = tag[:max_chars].strip()
                     cleaned.append(truncated)
                     print(f"Fallback truncate tag: '{tag}' -> '{truncated}'")
             except Exception as e:
                 print(f"Error condensing tag '{tag}': {e}")
-                cleaned.append(tag[:20].strip())
+                cleaned.append(tag[:max_chars].strip())
                 
     # Deduplicate and limit to 13
     seen = set()
@@ -603,7 +626,7 @@ def clean_tags(tags, client):
             seen.add(t)
             final_tags.append(t)
             
-    return final_tags[:13]
+    return final_tags[:target_count]
 
 TAG_COUNT = 13
 MAX_ETSY_TAG_CHARS = 20
@@ -725,18 +748,28 @@ def _dedupe_preserve_order(items):
     return result
 
 def _strip_prohibited_terms(text):
+    if risk_override_enabled(get_copywriting_profile(), "supplier_terms"):
+        return str(text or "").strip()
     clean = str(text or "")
     for term in PROHIBITED_LISTING_TERMS:
         clean = re.sub(re.escape(term), "", clean, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", clean).strip()
 
 def _strip_subjective_title_terms(text):
+    profile = get_copywriting_profile()
+    if (
+        risk_override_enabled(profile, "promotional_language")
+        or risk_override_enabled(profile, "title_style")
+    ):
+        return str(text or "").strip()
     clean = str(text or "")
     for term in SUBJECTIVE_TITLE_TERMS:
         clean = re.sub(rf"\b{re.escape(term)}\b", "", clean, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", clean).strip(" ,-")
 
 def _strip_description_hype(text):
+    if risk_override_enabled(get_copywriting_profile(), "promotional_language"):
+        return str(text or "").strip()
     clean = str(text or "")
     replacements = {
         r"\bperfect\s+for\b": "suited for",
@@ -796,6 +829,12 @@ def _format_listing_description(description):
     clean = "\n".join(lines).strip()
     clean = re.sub(r"\n{3,}", "\n\n", clean)
     return clean
+
+def _apply_description_policy(description):
+    if risk_override_enabled(get_copywriting_profile(), "description_structure"):
+        clean = str(description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        return re.sub(r"\n{4,}", "\n\n\n", clean)
+    return _format_listing_description(description)
 
 def _trim_at_word(text, limit):
     clean = re.sub(r"\s+", " ", str(text or "")).strip(" |,-")
@@ -895,21 +934,14 @@ def build_seo_strategy(title, description, image_facts=None, variation_specs=Non
     facts_str = _format_image_facts(image_facts)
     var_str = _format_variation_specs(variation_specs)
     prompt = (
-        "Create a practical SEO strategy for an Etsy product listing using only the facts provided.\n"
-        "Do not invent materials, dimensions, personalization, handmade status, brand names, or target audiences.\n"
-        "Do not use supplier/platform terms such as AliExpress, China, factory, wholesale, bulk, or dropshipping.\n\n"
+        f"{build_active_policy(get_copywriting_profile(), 'seo_strategy')}\n\n"
+        "Create the product-specific SEO strategy requested by the active workspace profile.\n\n"
         f"Original Title: {title}\n"
         f"Scraped Description/Info: {description}\n\n"
         "Image Facts:\n"
         f"{facts_str}\n\n"
         "Variation Specifications:\n"
         f"{var_str}\n\n"
-        "Strategy rules:\n"
-        "- primary_product_noun must be a plain buyer-searchable noun phrase.\n"
-        "- top_traits must be objective traits only: color, material, size, shape, style, function, capacity, or texture.\n"
-        "- primary_keywords and long_tail_keywords should be natural buyer phrases, not keyword salad.\n"
-        "- tag_keywords should include at least 18 candidates where possible, each preferably 20 characters or less.\n"
-        "- Include a mix of exact product phrases, broad category phrases, use-case phrases, and style/material phrases.\n\n"
         "Output strictly as JSON matching the SEOStrategy schema."
     )
 
@@ -970,20 +1002,25 @@ def _tag_phrase_candidates(listing_data, seo_strategy):
     return candidates
 
 def _simple_tag_cleanup(tag):
+    profile = get_copywriting_profile()
+    max_chars = effective_limit(profile, "etsy_tag_length")
+    preserve_long_tags = risk_override_enabled(profile, "etsy_tag_length")
     clean = _strip_description_hype(_strip_prohibited_terms(tag)).lower()
     clean = re.sub(r"[^a-z0-9 &-]", " ", clean)
     clean = re.sub(r"\s+", " ", clean).strip(" -&")
-    if len(clean) <= MAX_ETSY_TAG_CHARS:
+    if len(clean) <= max_chars or preserve_long_tags:
         return clean
     words = [word for word in clean.split() if word not in STOP_WORDS]
     shortened = " ".join(words)
-    if len(shortened) <= MAX_ETSY_TAG_CHARS:
+    if len(shortened) <= max_chars:
         return shortened
-    while words and len(" ".join(words)) > MAX_ETSY_TAG_CHARS:
+    while words and len(" ".join(words)) > max_chars:
         words.pop()
-    return " ".join(words).strip() or clean[:MAX_ETSY_TAG_CHARS].strip()
+    return " ".join(words).strip() or clean[:max_chars].strip()
 
 def complete_tags(listing_data, seo_strategy, client):
+    profile = get_copywriting_profile()
+    target_count = effective_limit(profile, "etsy_tag_count")
     raw_candidates = _tag_phrase_candidates(listing_data, seo_strategy)
     candidate_tags = []
     for candidate in raw_candidates:
@@ -992,8 +1029,8 @@ def complete_tags(listing_data, seo_strategy, client):
             candidate_tags.append(cleaned)
 
     cleaned_tags = clean_tags(candidate_tags, client)
-    if len(cleaned_tags) >= TAG_COUNT:
-        return cleaned_tags[:TAG_COUNT]
+    if len(cleaned_tags) >= target_count:
+        return cleaned_tags[:target_count]
 
     strategy = _coerce_seo_strategy(seo_strategy)
     noun = _simple_tag_cleanup(strategy.get("primary_product_noun") or "product")
@@ -1016,16 +1053,19 @@ def complete_tags(listing_data, seo_strategy, client):
         cleaned = _simple_tag_cleanup(tag)
         if cleaned and cleaned not in cleaned_tags:
             cleaned_tags.append(cleaned)
-        if len(cleaned_tags) >= TAG_COUNT:
+        if len(cleaned_tags) >= target_count:
             break
-    return cleaned_tags[:TAG_COUNT]
+    return cleaned_tags[:target_count]
 
 def _clean_listing_title(title):
+    profile = get_copywriting_profile()
+    title_limit = effective_limit(profile, "etsy_title_limit")
+    preserve_long_title = risk_override_enabled(profile, "etsy_title_limit")
     clean = _strip_prohibited_terms(title)
     clean = _strip_variation_label(clean)
     clean = re.sub(r"\s*[\|/]\s*", ", ", clean)
     clean = re.sub(r"\s+", " ", clean).strip(" ,-")
-    return _trim_at_word(clean, MAX_ETSY_TITLE_CHARS)
+    return clean if preserve_long_title else _trim_at_word(clean, title_limit)
 
 def _title_word_count(title):
     return len(re.findall(r"[A-Za-z0-9]+", str(title or "")))
@@ -1073,6 +1113,7 @@ def _phrase_is_useful_title_chunk(phrase, existing_chunks):
     return True
 
 def _compose_marketplace_title(original_title, description, seo_strategy):
+    profile = get_copywriting_profile()
     strategy = _coerce_seo_strategy(seo_strategy, original_title, description)
     noun = strategy.get("primary_product_noun") or _guess_primary_product_noun(original_title, description)
     noun = _strip_subjective_title_terms(_strip_prohibited_terms(noun))
@@ -1105,9 +1146,16 @@ def _compose_marketplace_title(original_title, description, seo_strategy):
         chunks.append(_title_case_phrase(candidate))
 
     title = ", ".join(chunks)
-    return _trim_at_word(title, MAX_ETSY_TITLE_CHARS)
+    if risk_override_enabled(profile, "etsy_title_limit"):
+        return title
+    return _trim_at_word(title, effective_limit(profile, "etsy_title_limit"))
 
 def _clean_marketplace_title(title, description, seo_strategy):
+    profile = get_copywriting_profile()
+    title_limit = effective_limit(profile, "etsy_title_limit")
+    if risk_override_enabled(profile, "title_style"):
+        clean = _clean_listing_title(title)
+        return clean if risk_override_enabled(profile, "etsy_title_limit") else _trim_at_word(clean, title_limit)
     clean = _strip_subjective_title_terms(_clean_listing_title(title))
     if (
         not clean
@@ -1118,11 +1166,13 @@ def _clean_marketplace_title(title, description, seo_strategy):
         rebuilt = _compose_marketplace_title(clean or title, description, seo_strategy)
         if rebuilt:
             clean = rebuilt
-    return _trim_at_word(clean, MAX_ETSY_TITLE_CHARS)
+    return clean if risk_override_enabled(profile, "etsy_title_limit") else _trim_at_word(clean, title_limit)
 
 def _normalize_listing_category(listing_data, seo_strategy=None):
     inferred = _infer_listing_category(listing_data, seo_strategy)
     current = str(listing_data.get("category") or "").strip()
+    if risk_override_enabled(get_copywriting_profile(), "category_inference") and current:
+        return current
     normalized_current = current.lower().replace("&amp;", "&")
     product_text = " ".join([
         listing_data.get("title", ""),
@@ -1194,8 +1244,9 @@ def _coerce_suggested_price(listing_data, source_price="", seo_strategy=None):
 
     source = _parse_price_value(source_price)
     if source and source > 0:
-        # Supplier prices are usually lower than Etsy retail; use a simple margin floor.
-        return _format_usd_price(max(source * 1.8, source + 8))
+        multiplier = 2.4 if risk_override_enabled(get_copywriting_profile(), "pricing_strategy") else 1.8
+        floor = 12 if risk_override_enabled(get_copywriting_profile(), "pricing_strategy") else 8
+        return _format_usd_price(max(source * multiplier, source + floor))
 
     return _format_usd_price(_estimate_price_from_listing(listing_data, seo_strategy))
 
@@ -1246,7 +1297,7 @@ def _compact_description(description, limit):
 
 def _ensure_seo_metadata(listing_data, seo_strategy, source_price=""):
     strategy = _coerce_seo_strategy(seo_strategy)
-    description = _format_listing_description(_strip_description_hype(listing_data.get("description", "")))
+    description = _apply_description_policy(_strip_description_hype(listing_data.get("description", "")))
     listing_data["description"] = description
     title = _clean_marketplace_title(listing_data.get("title", ""), description, strategy)
 
@@ -1265,6 +1316,7 @@ def _ensure_seo_metadata(listing_data, seo_strategy, source_price=""):
     return listing_data
 
 def score_listing_seo(listing_data, source_context=""):
+    profile = get_copywriting_profile()
     score = 100
     notes = []
     title = listing_data.get("title", "")
@@ -1277,34 +1329,37 @@ def score_listing_seo(listing_data, source_context=""):
     if not title:
         score -= 20
         notes.append("Missing Etsy title.")
-    if len(title) > MAX_ETSY_TITLE_CHARS:
+    if len(title) > MAX_ETSY_TITLE_CHARS and not risk_override_enabled(profile, "etsy_title_limit"):
         score -= 15
         notes.append("Etsy title is over 140 characters.")
-    if len(title) < MIN_MARKETPLACE_TITLE_CHARS:
+    if len(title) < MIN_MARKETPLACE_TITLE_CHARS and not risk_override_enabled(profile, "title_style"):
         score -= 12
         notes.append("Etsy title is short; add more objective search detail while staying readable.")
-    if len(title_words) > IDEAL_MARKETPLACE_TITLE_WORDS:
+    if len(title_words) > IDEAL_MARKETPLACE_TITLE_WORDS and not risk_override_enabled(profile, "title_style"):
         score -= 8
         notes.append("Etsy title is over the preferred readability target.")
-    if _title_phrase_count(title) > MAX_MARKETPLACE_TITLE_PHRASES:
+    if _title_phrase_count(title) > MAX_MARKETPLACE_TITLE_PHRASES and not risk_override_enabled(profile, "title_style"):
         score -= 8
         notes.append("Etsy title uses too many comma/colon phrase chunks.")
-    if _title_has_variation_leakage(title):
+    if _title_has_variation_leakage(title) and not risk_override_enabled(profile, "title_style"):
         score -= 20
         notes.append("Etsy title appears to contain raw variation labels such as Color/Size.")
-    if "|" in title:
+    if "|" in title and not risk_override_enabled(profile, "title_style"):
         score -= 6
         notes.append("Etsy title still uses pipe-separated keyword formatting.")
-    if _is_keyword_stuffed_title(title):
+    if _is_keyword_stuffed_title(title) and not risk_override_enabled(profile, "title_style"):
         score -= 10
         notes.append("Etsy title reads like a keyword list instead of one clean shopper-facing title.")
-    if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS):
+    if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS) and not risk_override_enabled(profile, "promotional_language"):
         score -= 5
         notes.append("Etsy title includes subjective wording better suited for the description.")
     if len(set(word.lower() for word in title_words)) < max(1, len(title_words) - 2):
         score -= 5
         notes.append("Etsy title repeats too many words.")
-    if any(term in f"{title} {description}".lower() for term in PROHIBITED_LISTING_TERMS):
+    if (
+        any(term in f"{title} {description}".lower() for term in PROHIBITED_LISTING_TERMS)
+        and not risk_override_enabled(profile, "supplier_terms")
+    ):
         score -= 20
         notes.append("Listing contains prohibited supplier/platform language.")
     listing_text = " ".join([
@@ -1313,17 +1368,22 @@ def score_listing_seo(listing_data, source_context=""):
         " ".join(str(tag) for tag in tags),
     ]).lower()
     for claim, support_terms in RISKY_UNSUPPORTED_CLAIMS.items():
-        if any(term in listing_text for term in support_terms) and not _source_supports_claim(source_context, support_terms):
+        if (
+            any(term in listing_text for term in support_terms)
+            and not _source_supports_claim(source_context, support_terms)
+            and not risk_override_enabled(profile, "factual_accuracy")
+            and not risk_override_enabled(profile, "positioning_claims")
+        ):
             score -= 8
             notes.append(f"Potential unsupported claim: {claim}.")
-    if any(term in listing_text for term in TRADEMARK_RISK_TERMS):
+    if any(term in listing_text for term in TRADEMARK_RISK_TERMS) and not risk_override_enabled(profile, "trademark_language"):
         score -= 15
         notes.append("Possible trademark/IP term detected; review before publishing.")
 
-    if len(tags) != TAG_COUNT:
+    if len(tags) != TAG_COUNT and not risk_override_enabled(profile, "etsy_tag_count"):
         score -= 15
         notes.append("Etsy tags should contain exactly 13 entries.")
-    if any(len(str(tag)) > MAX_ETSY_TAG_CHARS for tag in tags):
+    if any(len(str(tag)) > MAX_ETSY_TAG_CHARS for tag in tags) and not risk_override_enabled(profile, "etsy_tag_length"):
         score -= 15
         notes.append("One or more Etsy tags exceed 20 characters.")
     if len({str(tag).lower() for tag in tags}) != len(tags):
@@ -1336,7 +1396,7 @@ def score_listing_seo(listing_data, source_context=""):
     elif len(first_sentence) > 180:
         score -= 5
         notes.append("First description sentence is long; keep the product identity clear early.")
-    if "product details:" not in description.lower():
+    if "product details:" not in description.lower() and not risk_override_enabled(profile, "description_structure"):
         score -= 10
         notes.append("Description is missing a Product Details section with confirmed facts.")
 
@@ -1356,6 +1416,7 @@ def score_listing_seo(listing_data, source_context=""):
 def build_listing_repair_instructions(listing_data, source_context=""):
     """Return exact deterministic repairs for the model's final correction pass."""
     repairs = []
+    profile = get_copywriting_profile()
     title = str(listing_data.get("title") or "").strip()
     title_words = re.findall(r"\w+", title)
     title_lower = title.lower()
@@ -1368,19 +1429,22 @@ def build_listing_repair_instructions(listing_data, source_context=""):
 
     if not title:
         repairs.append("Write one Etsy title using the primary product noun early, objective supported traits, and one real use case if supported.")
-    elif len(title) < MIN_MARKETPLACE_TITLE_CHARS:
+    elif len(title) < MIN_MARKETPLACE_TITLE_CHARS and not risk_override_enabled(profile, "title_style"):
         repairs.append("Rewrite the title to about 80-125 characters while staying readable; add only objective supported search details from the source facts.")
-    if len(title) > MAX_ETSY_TITLE_CHARS:
+    if len(title) > MAX_ETSY_TITLE_CHARS and not risk_override_enabled(profile, "etsy_title_limit"):
         repairs.append("Shorten the title to 140 characters or less without removing the main product noun.")
-    if len(title_words) > IDEAL_MARKETPLACE_TITLE_WORDS:
+    if len(title_words) > IDEAL_MARKETPLACE_TITLE_WORDS and not risk_override_enabled(profile, "title_style"):
         repairs.append("Simplify the title to roughly 18 words or fewer so it reads like one shopper-facing title.")
-    if _title_phrase_count(title) > MAX_MARKETPLACE_TITLE_PHRASES or "|" in title:
+    if (_title_phrase_count(title) > MAX_MARKETPLACE_TITLE_PHRASES or "|" in title) and not risk_override_enabled(profile, "title_style"):
         repairs.append("Rewrite the title as one natural Etsy title with no pipe separators and no more than three comma or colon chunks.")
-    if _title_has_variation_leakage(title) or re.search(r"\{[^}]+['\"]?(trait|value)['\"]?[^}]*\}", title_lower):
+    if (
+        _title_has_variation_leakage(title)
+        or re.search(r"\{[^}]+['\"]?(trait|value)['\"]?[^}]*\}", title_lower)
+    ) and not risk_override_enabled(profile, "title_style"):
         repairs.append("Remove raw variation labels and dict-shaped text from the title, including Color:, Size:, trait, and value fragments.")
-    if _is_keyword_stuffed_title(title):
+    if _is_keyword_stuffed_title(title) and not risk_override_enabled(profile, "title_style"):
         repairs.append("Rewrite the title so it is not a keyword list; keep the product noun first and use natural phrasing.")
-    if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS):
+    if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS) and not risk_override_enabled(profile, "promotional_language"):
         repairs.append("Remove subjective or risky title words such as perfect, beautiful, luxury, designer, handmade, and eco-friendly unless directly supported.")
 
     if not description:
@@ -1388,22 +1452,27 @@ def build_listing_repair_instructions(listing_data, source_context=""):
     else:
         if not _first_sentence(description):
             repairs.append("Add a clear first sentence that naturally includes the main product keyword for SEO.")
-        if "product details:" not in description_lower:
+        if "product details:" not in description_lower and not risk_override_enabled(profile, "description_structure"):
             repairs.append("Add a Product Details: section after the story opening and list only confirmed facts from the source, image facts, or variation specs.")
         if re.search(r"\b(is|are|making it|makes it)\s+for\b", description_lower):
             repairs.append("Fix awkward grammar left by cleanup, such as 'is for' or 'making it for', while keeping cautious factual wording.")
 
-    if any(term in listing_text for term in PROHIBITED_LISTING_TERMS):
+    if any(term in listing_text for term in PROHIBITED_LISTING_TERMS) and not risk_override_enabled(profile, "supplier_terms"):
         repairs.append("Remove supplier/platform language such as AliExpress, factory, wholesale, dropshipping, bulk order, bulk pricing, or bulk sale.")
     for claim, support_terms in RISKY_UNSUPPORTED_CLAIMS.items():
-        if any(term in listing_text for term in support_terms) and not _source_supports_claim(source_context, support_terms):
+        if (
+            any(term in listing_text for term in support_terms)
+            and not _source_supports_claim(source_context, support_terms)
+            and not risk_override_enabled(profile, "factual_accuracy")
+            and not risk_override_enabled(profile, "positioning_claims")
+        ):
             repairs.append(f"Remove or soften unsupported {claim} claims unless the exact source context supports them.")
-    if any(term in listing_text for term in TRADEMARK_RISK_TERMS):
+    if any(term in listing_text for term in TRADEMARK_RISK_TERMS) and not risk_override_enabled(profile, "trademark_language"):
         repairs.append("Possible trademark/IP term detected; keep it only if it is the literal product identity and mark for human review.")
 
-    if len(tags) != TAG_COUNT:
+    if len(tags) != TAG_COUNT and not risk_override_enabled(profile, "etsy_tag_count"):
         repairs.append("Return exactly 13 Etsy tags.")
-    if any(len(str(tag)) > MAX_ETSY_TAG_CHARS for tag in tags):
+    if any(len(str(tag)) > MAX_ETSY_TAG_CHARS for tag in tags) and not risk_override_enabled(profile, "etsy_tag_length"):
         repairs.append("Shorten every Etsy tag to 20 characters or less.")
     if len({str(tag).lower() for tag in tags}) != len(tags):
         repairs.append("Remove duplicate Etsy tags and replace them with distinct relevant buyer search phrases.")
@@ -1445,6 +1514,10 @@ def finalize_listing_seo(listing_data, seo_strategy, client, source_price="", so
         or any("trademark" in note.lower() for note in notes)
     )
     listing_data["review_reasons"] = _dedupe_preserve_order([*notes, *repairs]) if listing_data["needs_review"] else []
+    compatibility = get_etsy_compatibility(listing_data, get_copywriting_profile())
+    listing_data["etsy_compatible"] = compatibility["etsy_compatible"]
+    listing_data["etsy_compatibility_issues"] = compatibility["issues"]
+    listing_data["enabled_risk_overrides"] = compatibility["enabled_risk_overrides"]
     return listing_data
 
 def refine_listing_from_qa_notes(listing_data: dict, qa_notes: list, source_context: str, image_facts: dict, seo_strategy: dict, client=None) -> dict:
@@ -1457,12 +1530,8 @@ def refine_listing_from_qa_notes(listing_data: dict, qa_notes: list, source_cont
     facts_part = json.dumps(image_facts or {}, indent=2)
     strategy_part = json.dumps(seo_strategy or listing_data.get("seo_strategy") or {}, indent=2)
     prompt = (
-        "You are revising an Etsy listing in STRICT QUALITY mode.\n"
-        "Fix every item listed in Required Repairs. Accuracy is more important than rich marketing copy.\n"
-        "Use only facts supported by Source Context, Image Facts, or SEO Strategy. If a detail is uncertain, omit it.\n"
-        "Keep the description cautious but readable: start with a safe lifestyle/story opening, then add a Product Details section with only confirmed facts.\n"
-        "Do not invent materials, dimensions, pockets, waterproofing, handmade/eco/luxury/designer claims, compatibility, or capacity.\n"
-        "Write one natural Etsy title, ideally 80-125 characters, with the product noun early and no raw Color:/Size: labels.\n\n"
+        f"{build_active_policy(get_copywriting_profile(), 'strict_qa_repair')}\n\n"
+        "Revise the listing and fix every Required Repair that remains applicable under the active workspace profile.\n\n"
         "Current Listing:\n"
         f"{json.dumps(listing_data, indent=2, ensure_ascii=False)}\n\n"
         "Required Repairs:\n"
@@ -1499,34 +1568,6 @@ def refine_listing_from_qa_notes(listing_data: dict, qa_notes: list, source_cont
         print(f"Error during strict QA correction pass via Gemini: {e}")
         return listing_data
 
-LISTING_TWEAK_PRESETS = {
-    "fix_title": (
-        "Rewrite only the Etsy title so it is natural, buyer-friendly, under 140 characters, "
-        "and starts with the main product noun plus supported objective traits."
-    ),
-    "fix_category": (
-        "Choose a more specific Etsy-style category path. Never return Not categorized, "
-        "uncategorized, none, or a vague generic product category when the product type is clear."
-    ),
-    "improve_tags": (
-        "Improve Etsy tags so there are exactly 13 unique tags, each 20 characters or less, "
-        "covering product identity, supported traits, use cases, and realistic gift intent only when applicable."
-    ),
-    "safer_description": (
-        "Revise the description to remove unsupported claims while keeping it readable. "
-        "Keep a light lifestyle opening, then a Product Details section with only confirmed facts."
-    ),
-    "regenerate_description": (
-        "Regenerate the description from the existing listing and supporting source facts. "
-        "Keep it Etsy-safe, scannable, factually conservative, and properly separated with line breaks."
-    ),
-    "regenerate_all": (
-        "Regenerate the selected copy fields from the current listing and supporting source facts. "
-        "Preserve factual accuracy and avoid drifting away from the product identity."
-    ),
-    "custom": "Apply the shop owner's custom instruction while preserving factual accuracy.",
-}
-
 def tweak_etsy_listing(
     existing_listing: dict,
     preset_key: str = "custom",
@@ -1556,9 +1597,12 @@ def tweak_etsy_listing(
     variation_specs = variation_specs or []
 
     preset_key = str(preset_key or "custom").strip() or "custom"
-    preset_instruction = LISTING_TWEAK_PRESETS.get(preset_key, LISTING_TWEAK_PRESETS["custom"])
+    profile = get_copywriting_profile()
+    preset_instruction = get_tweak_instruction(profile, preset_key)
     custom_instruction = str(instruction or "").strip()
     custom_rules = str(presets.get("custom_prompt_rules") or "").strip()
+    if custom_rules == profile.get("master_rules", "").strip():
+        custom_rules = ""
 
     strategy = _coerce_seo_strategy(
         base_listing.get("seo_strategy"),
@@ -1577,13 +1621,13 @@ def tweak_etsy_listing(
         )
 
     prompt = (
+        f"{build_active_policy(profile)}\n\n"
         "You are tweaking an existing Etsy listing, not writing a brand-new product analysis.\n"
         "Use the Current Listing as the primary reference. Use Supporting Facts only to prevent or correct factual mistakes.\n"
-        "Do not scan or request images. Do not invent materials, dimensions, pockets, waterproofing, handmade/eco/luxury/designer claims, compatibility, or capacity.\n"
+        "Do not scan or request images. Follow the active inference and factual policies for uncertain details.\n"
         "Only revise the selected fields. Copy all unselected fields exactly from the Current Listing.\n"
         "If the description contains a policy/footer section, keep it intact unless the selected instruction explicitly asks to remove or rewrite it.\n"
-        "Use plain Etsy-safe text: no markdown bold/italic, no asterisks for emphasis, and no underscores.\n"
-        "Use double newlines between the opening paragraph, PRODUCT DETAILS, notes, and policy/footer sections.\n\n"
+        "Return clean plain text inside the structured response.\n\n"
         f"{owner_rules}"
         f"Selected Fields: {', '.join(selected_fields)}\n"
         f"Preset: {preset_key}\n"
@@ -1638,7 +1682,7 @@ def tweak_etsy_listing(
                 value = [part.strip() for part in re.split(r",|\n", value) if part.strip()]
             revised[field] = _as_list(value)
         elif field == "description":
-            revised[field] = _format_listing_description(_strip_description_hype(value))
+            revised[field] = _apply_description_policy(_strip_description_hype(value))
         elif field == "title":
             revised[field] = str(value or "").strip()
         elif field == "category":
@@ -1676,7 +1720,8 @@ def tweak_etsy_listing(
 
 def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
     """Inject preset add-ons into the listing description and apply policy override."""
-    desc = _format_listing_description(listing_data.get("description", ""))
+    presets = {**get_listing_addons(get_copywriting_profile()), **(presets or {})}
+    desc = _apply_description_policy(listing_data.get("description", ""))
 
     # Prepend shop intro if set
     shop_intro = (presets.get("shop_intro") or "").strip()
@@ -1706,7 +1751,7 @@ def _apply_presets_to_listing(listing_data: dict, presets: dict) -> dict:
         desc = desc + "\n\n" + "\n".join(addons)
 
     desc += policy_block
-    desc = _format_listing_description(desc)
+    desc = _apply_description_policy(desc)
     listing_data["description"] = desc
     return listing_data
 
@@ -1720,8 +1765,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
     strategy_part = json.dumps(seo_strategy or listing_data.get("seo_strategy") or {}, indent=2)
 
     prompt = (
-        "You are a strict QA critic for Etsy listings.\n"
-        "Analyze the draft Etsy listing against the Scraped Info and the Image Facts extracted from product photos.\n\n"
+        f"{build_active_policy(get_copywriting_profile(), 'quality_review')}\n\n"
+        "Analyze the draft against the source context and report only issues that remain disallowed by the active profile.\n\n"
         "Draft Etsy Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
         f"Category: {listing_data.get('category', '')}\n"
@@ -1734,12 +1779,6 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         f"{scraped_part}\n\n"
         "Image Facts (Extracted directly from product photos/charts):\n"
         f"{facts_part}\n\n"
-        "CRITICISM CRITERIA:\n"
-        "1. ACCURACY: Check for hallucinations or approximations. If Image Facts specify exact dimensions (e.g. 'Height: 38cm'), does the Description use that exact number? If not, it is an issue. Did the Description invent sizes or facts that are not present in either source?\n"
-        "2. TITLE QUALITY: Is there one clean Etsy-ready title? Is it under 140 chars, ideally 80-125 chars, readable, and clear in the first 50-60 characters? Does it avoid raw variation labels like 'Color:', use no more than 3 comma/colon chunks, and avoid tag-list formatting, repeated words, and subjective/risky words like perfect, beautiful, luxury, designer, handmade, or eco-friendly unless directly supported?\n"
-        "3. DESCRIPTION STRUCTURE: Does the description start with a safe lifestyle/story opening that naturally includes the main product keyword but does not add concrete unsupported facts? Does it then move into a clear Product Details section that only lists confirmed facts?\n"
-        "4. TAG COMPLIANCE: Are there exactly 13 unique multi-word tags where possible? Is every tag 20 characters or less? Do the tags cover product identity, traits, use cases, style/material, and long-tail phrases without repetition?\n"
-        "5. ETSY SEO: Do the title, first description sentence, specific category path, and tags work together without keyword stuffing? Is the suggested price a realistic USD price and not blank or 0?\n"
         "\nOutput your response strictly as a JSON object matching the requested schema."
     )
 
@@ -1782,11 +1821,8 @@ def review_and_refine_listing(listing_data: dict, scraped_text: str, image_facts
         print(f" - SEO issues: {verdict.get('seo_issues')}")
 
     correction_prompt = (
-        "You are an expert copywriter. Revise the following draft Etsy listing based on the critic feedback.\n"
-        "Ensure all details are 100% accurate to the product specifications and images.\n"
-        "Make sure the description starts with a safe lifestyle/story opening for readability and SEO, then moves into a Product Details section containing only confirmed facts.\n"
-        "Use double newlines (\\n\\n) to separate the story opening, Product Details, notes, and policy/footer sections so it is clean, structured, and highly readable.\n"
-        "Use one clean Etsy marketplace title, ideally 80-125 characters, with the main product noun early and objective differentiators after it. Keep it buyer-friendly, not keyword-stuffed. Remove raw variation labels like 'Color:' and avoid risky claims unless source-supported. Put extra keyword coverage in tags and the description instead of creating separate metadata fields.\n\n"
+        f"{build_active_policy(get_copywriting_profile(), 'correction')}\n\n"
+        "Revise the draft based on the critic feedback. Apply only feedback that remains applicable under the active profile.\n\n"
         "Draft Listing:\n"
         f"Title: {listing_data.get('title', '')}\n"
         f"Category: {listing_data.get('category', '')}\n"
@@ -1844,6 +1880,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         image_facts = {}
     copywriting_depth = str(copywriting_depth or "balanced").strip().lower()
     quality_mode = copywriting_depth == "quality"
+    profile = get_copywriting_profile()
 
     print("Generating Etsy-optimized listing content...")
 
@@ -1859,6 +1896,8 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
     seo_strategy_str = json.dumps(seo_strategy, indent=2)
 
     custom_rules = presets.get("custom_prompt_rules", "").strip()
+    if custom_rules == profile.get("master_rules", "").strip():
+        custom_rules = ""
     owner_rules = ""
     if custom_rules:
         owner_rules = (
@@ -1867,19 +1906,8 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
             "Follow these unless they conflict with factual accuracy, source support, Etsy compliance, or marketplace safety.\n\n"
         )
 
-    quality_rules = ""
-    if quality_mode:
-        quality_rules = (
-            "STRICT QUALITY MODE:\n"
-            "- Be conservative. If a product detail is not directly supported by source text, specs, variation specs, or extracted image facts, omit it.\n"
-            "- A light storytelling style is allowed for lifestyle context and shopper flow, but concrete product facts must stay source-backed.\n"
-            "- The opening paragraph can explain how the item fits into a routine, outfit, room, or simple use moment, but must not imply unsupported features or performance.\n"
-            "- Do not mention materials, dimensions, capacity, pockets, closures, waterproofing, handmade/eco/luxury/designer positioning, compatibility, or gift/audience claims unless supported.\n"
-            "- Use cautious wording for visible styling only. Do not turn visual guesses into hard product facts.\n"
-            "- If a trademark/brand/character term appears, keep it only when it is the literal product identity and expect human review.\n\n"
-        )
-
     prompt = (
+        f"{build_active_policy(profile, 'listing_draft')}\n\n"
         f"Create an Etsy listing for the following product:\n"
         f"Original Title: {title}\n"
         f"Scraped Description/Info: {description}\n"
@@ -1891,19 +1919,7 @@ def write_etsy_listing(title, description, price="", client=None, presets: dict 
         "SEO Strategy (use this as the source of keyword priorities):\n"
         f"{seo_strategy_str}\n\n"
         f"{owner_rules}"
-        f"{quality_rules}"
-        "Guidelines:\n"
-        "1. Etsy-first title: write ONE clean title for the Etsy title field. Use this pattern: [primary product keyword] + [1-2 objective differentiators such as material/color/style] + [real use case if relevant].\n"
-        "2. Title style: keep the title under 140 characters and ideally 80-125 characters. Use no more than 3 comma/colon-separated chunks. Do not write a long list of tags in the title. Never include raw variation labels such as 'Color:' or 'Size:'. Avoid repeated words, sale/shipping language, and subjective/risky words like perfect, beautiful, amazing, luxury, designer, handmade, or eco-friendly unless directly supported by the source facts.\n"
-        "3. Description structure: start with a safe lifestyle/story opening paragraph of 2-3 sentences. The first sentence must naturally include the main product keyword for SEO, but the story must stay general and must not introduce concrete unsupported facts.\n"
-        "4. Product Details section: after the story opening, add a clear 'Product Details:' section. List only confirmed facts from the source title, specs, Image Facts, or Variation Specifications. If a detail is unknown, leave it out instead of guessing.\n"
-        "5. Buyer note: when useful, add a short cautious note such as 'Please review the photos for exact color, texture, and proportions.' Do not use this note to hide invented details.\n"
-        "6. Formatting: use double newlines (\\n\\n) to separate the story opening, Product Details, optional note, and policy/footer sections. Do NOT output the description as a single dense paragraph.\n"
-        "7. DIMENSIONS/SPECS: Prioritize exact measurements from 'Variation Specifications' and 'Image Facts'. If dimensions are unclear, missing, or empty, DO NOT mention dimensions at all. Do not invent or guess them.\n"
-        "8. Category: choose a specific Etsy-style category path where possible, e.g. 'Bags & Purses > Backpacks' instead of a vague category. Never return 'Not categorized'.\n"
-        "9. Etsy tags: provide exactly 13 unique relevant search tags. Each tag must be under 20 characters. Prefer multi-word phrases. Cover product identity, material/color/style, use case, audience/gift intent only if relevant, and long-tail niche phrases. Do not repeat the same root phrase across many tags.\n"
-        "10. Etsy SEO balance: use natural keyword phrases in the title, tags, and first description paragraph. Do not keyword-stuff the story opening.\n"
-        "11. Suggest a realistic retail price in USD. Never return blank, 0, or '0'. If source price is low supplier pricing, suggest a realistic Etsy retail price.\n"
+        f"Copywriting depth: {copywriting_depth}.\n"
         "Output your response strictly as a JSON object matching the EtsyListing schema."
     )
 

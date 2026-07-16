@@ -5,7 +5,17 @@ import unittest
 import yaml
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
-from src.ai_helper import clean_tags, write_etsy_listing, extract_variation_specs, finalize_listing_seo, score_listing_seo, tweak_etsy_listing
+from src.ai_helper import (
+    clean_tags,
+    extract_variation_specs,
+    finalize_listing_seo,
+    reset_copywriting_profile_override,
+    score_listing_seo,
+    set_copywriting_profile_override,
+    tweak_etsy_listing,
+    write_etsy_listing,
+)
+from src.copywriting_config import normalize_copywriting_profile
 from src.image_gen import generate_prompts_from_inspo
 
 class TestEtsyAutomationLogic(unittest.TestCase):
@@ -118,13 +128,42 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertEqual(mock_client.models.generate_content.call_count, 3)
         listing_prompt = mock_client.models.generate_content.call_args_list[1].kwargs["contents"]
         self.assertIn("SHOP OWNER COPYWRITING RULES (high priority)", listing_prompt)
-        self.assertLess(
-            listing_prompt.index("SHOP OWNER COPYWRITING RULES (high priority)"),
-            listing_prompt.index("Guidelines:"),
-        )
-        self.assertIn("safe lifestyle/story opening", listing_prompt)
-        self.assertIn("Product Details:", listing_prompt)
-        self.assertIn("List only confirmed facts", listing_prompt)
+        self.assertIn("WORKSPACE MASTER RULES:", listing_prompt)
+        self.assertIn("LISTING DRAFT INSTRUCTIONS:", listing_prompt)
+        self.assertIn("ACTIVE EDITORIAL AND COMPATIBILITY POLICIES:", listing_prompt)
+        self.assertIn("Strict Factual Accuracy [SAFE DEFAULT]", listing_prompt)
+
+    def test_risk_overrides_preserve_long_titles_and_tags_with_compatibility_warnings(self):
+        profile = normalize_copywriting_profile({
+            "risk_controls": {
+                "title_style": {"override_enabled": True},
+                "etsy_title_limit": {"override_enabled": True, "value": 220},
+                "etsy_tag_count": {"override_enabled": True, "value": 4},
+                "etsy_tag_length": {"override_enabled": True, "value": 40},
+            }
+        })
+        token = set_copywriting_profile_override(profile)
+        try:
+            listing = {
+                "title": "Luxury Statement Product " * 8,
+                "description": "A dramatic and highly promotional description.",
+                "tags": ["very long discovery keyword", "second expressive keyword", "third keyword", "fourth keyword"],
+                "suggested_price": "$80.00",
+                "category": "Accessories",
+            }
+            result = finalize_listing_seo(
+                listing,
+                {"primary_product_noun": "statement product", "tag_keywords": listing["tags"]},
+                MagicMock(),
+            )
+        finally:
+            reset_copywriting_profile_override(token)
+
+        self.assertGreater(len(result["title"]), 140)
+        self.assertEqual(len(result["tags"]), 4)
+        self.assertFalse(result["etsy_compatible"])
+        self.assertTrue(any("Title is" in issue for issue in result["etsy_compatibility_issues"]))
+        self.assertTrue(any("tag(s) exceed" in issue for issue in result["etsy_compatibility_issues"]))
 
     @unittest.mock.patch("src.ai_helper.get_openai_client", return_value=None)
     def test_keyword_stuffed_title_is_rebuilt_for_etsy_readability(self, mock_get_openai):
@@ -914,6 +953,83 @@ class TestHostedWorkspaceIsolation(unittest.TestCase):
         model_keys = [model["key"] for model in payload["models"]]
         self.assertIn("gpt-4.1-mini", model_keys)
         self.assertIn("gpt-5.6-luna", model_keys)
+
+    def test_copywriting_profiles_are_workspace_scoped(self):
+        profile_response = self.client.get(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "profile-a"},
+        )
+        profile = profile_response.json()["profile"]
+        profile["master_rules"] = "Workspace A writes energetic editorial copy."
+        profile["risk_controls"]["promotional_language"]["override_enabled"] = True
+
+        save_response = self.client.post(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "profile-a"},
+            json={"profile": profile},
+        )
+        other_response = self.client.get(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "profile-b"},
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(
+            save_response.json()["profile"]["master_rules"],
+            "Workspace A writes energetic editorial copy.",
+        )
+        self.assertTrue(
+            save_response.json()["profile"]["risk_controls"]["promotional_language"]["override_enabled"]
+        )
+        self.assertNotEqual(
+            other_response.json()["profile"]["master_rules"],
+            "Workspace A writes energetic editorial copy.",
+        )
+
+    def test_copywriting_prompt_preview_shows_active_overrides_and_contract(self):
+        profile = self.client.get(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "preview-user"},
+        ).json()["profile"]
+        profile["brand_voice"] = "Playful fashion editorial."
+        profile["risk_controls"]["etsy_title_limit"].update({
+            "override_enabled": True,
+            "value": 220,
+        })
+
+        response = self.client.post(
+            "/api/copywriting-prompt-preview",
+            headers={"X-User-Token": "preview-user"},
+            json={"stage_key": "listing_draft", "profile": profile},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        prompt = response.json()["prompt"]
+        self.assertIn("Playful fashion editorial.", prompt)
+        self.assertIn("Etsy Title Length [OVERRIDE ENABLED]", prompt)
+        self.assertIn("Effective value: 220", prompt)
+        self.assertIn("TECHNICAL OUTPUT CONTRACT", prompt)
+
+    def test_copywriting_profile_reset_restores_defaults(self):
+        profile = self.client.get(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "reset-profile"},
+        ).json()["profile"]
+        profile["master_rules"] = "Temporary custom rules."
+        self.client.post(
+            "/api/copywriting-profile",
+            headers={"X-User-Token": "reset-profile"},
+            json={"profile": profile},
+        )
+
+        response = self.client.post(
+            "/api/copywriting-profile/reset",
+            headers={"X-User-Token": "reset-profile"},
+            json={"section": ""},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.json()["profile"]["master_rules"], "Temporary custom rules.")
 
     def test_copywriting_depth_variation_scan_policy(self):
         from src import server
