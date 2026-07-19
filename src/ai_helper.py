@@ -701,6 +701,15 @@ STOP_WORDS = {
     "from", "your", "my", "our", "this", "that", "new", "hot", "sale"
 }
 
+TITLE_FRAGMENT_STARTERS = {
+    "able", "ansparent", "cent", "de", "docume", "eck", "izer", "l", "livi",
+    "ng", "organ", "si", "spira", "t", "und",
+}
+
+TITLE_FRAGMENT_ENDINGS = {
+    "cent", "docume", "double-d", "livi", "organ", "si", "spira", "t", "und",
+}
+
 def _model_to_dict(value):
     if hasattr(value, "model_dump"):
         return value.model_dump()
@@ -766,6 +775,26 @@ def _strip_subjective_title_terms(text):
     for term in SUBJECTIVE_TITLE_TERMS:
         clean = re.sub(rf"\b{re.escape(term)}\b", "", clean, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", clean).strip(" ,-")
+
+def _strip_title_measurements(text):
+    """Keep exact sizes/dimensions out of Etsy titles; they belong in details."""
+    clean = str(text or "")
+    clean = re.sub(
+        r"\b\d+(?:\.\d+)?\s*(?:x|×|by)\s*\d+(?:\.\d+)?(?:\s*(?:x|×|by)\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|m|in|inch|inches|ft|feet)?\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(
+        r"\b\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch|inches|ft|feet)\s*(?:high|wide|deep|tall|long)?\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(r"\b(?:size|sizes|dimension|dimensions)\s*[:/-]?\s*[A-Za-z0-9 ,x×.-]+\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\s*,\s*,+", ", ", clean)
+    clean = re.sub(r"\s{2,}", " ", clean)
+    return clean.strip(" ,-")
 
 def _strip_description_hype(text):
     if risk_override_enabled(get_copywriting_profile(), "promotional_language"):
@@ -876,6 +905,9 @@ def _format_variation_specs(variation_specs):
 def _guess_primary_product_noun(title, description):
     text = f"{title} {description}".lower()
     product_markers = [
+        "coffee table", "side table", "bedside table", "end table", "accent table",
+        "console table", "tea table", "table", "bookshelf", "bookcase", "bookstand",
+        "book holder", "book organizer", "file organizer", "desktop organizer",
         "crossbody bag", "shoulder bag", "tote bag", "handbag", "backpack", "wallet",
         "necklace", "bracelet", "earrings", "ring", "dress", "shirt", "jacket",
         "mug", "cup", "lamp", "vase", "organizer", "kitchen tool", "spatula",
@@ -890,15 +922,49 @@ def _guess_primary_product_noun(title, description):
     ]
     return " ".join(words[:2]) if words else "product"
 
+def _source_has_whole_word(source_text, word):
+    if not source_text or not word:
+        return True
+    return bool(re.search(rf"\b{re.escape(str(word))}\b", str(source_text), flags=re.IGNORECASE))
+
+def _phrase_has_fragment_edges(phrase, source_text=""):
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", str(phrase or ""))
+    if not words:
+        return True
+    first = words[0].lower().strip("-")
+    last = words[-1].lower().strip("-")
+    if len(first) <= 1 or len(last) <= 1:
+        return True
+    if first in TITLE_FRAGMENT_STARTERS or last in TITLE_FRAGMENT_ENDINGS:
+        return True
+    if str(phrase or "").strip().endswith("-"):
+        return True
+    if source_text and (not _source_has_whole_word(source_text, first) or not _source_has_whole_word(source_text, last)):
+        return True
+    return False
+
+def _extract_title_phrase_candidates(text):
+    clean = _strip_title_measurements(_strip_subjective_title_terms(_strip_prohibited_terms(text)))
+    clean = re.sub(r"[^A-Za-z0-9 &,'-]+", " ", clean)
+    words = [
+        word for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", clean)
+        if word.lower() not in STOP_WORDS and len(word) > 1
+    ]
+    candidates = []
+    for size in (4, 3, 2):
+        for idx in range(0, max(0, len(words) - size + 1)):
+            phrase = " ".join(words[idx:idx + size])
+            if _phrase_has_fragment_edges(phrase, clean):
+                continue
+            candidates.append(phrase)
+    return _dedupe_preserve_order(candidates)
+
 def _fallback_seo_strategy(title, description, image_facts=None, variation_specs=None):
     primary_noun = _guess_primary_product_noun(title, description)
     fact_terms = []
     for value in (image_facts or {}).values():
-        fact_terms.extend(re.findall(r"[A-Za-z][A-Za-z0-9 -]{2,24}", str(value)))
-    title_terms = [
-        word for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9 -]{2,24}", str(title))
-        if word.lower() not in STOP_WORDS
-    ]
+        fact_terms.extend(_extract_title_phrase_candidates(str(value)))
+    title_terms = _extract_title_phrase_candidates(str(title))
     candidates = _dedupe_preserve_order([primary_noun, *title_terms[:8], *fact_terms[:8]])
     return {
         "primary_product_noun": primary_noun,
@@ -1063,6 +1129,8 @@ def _clean_listing_title(title):
     preserve_long_title = risk_override_enabled(profile, "etsy_title_limit")
     clean = _strip_prohibited_terms(title)
     clean = _strip_variation_label(clean)
+    if not risk_override_enabled(profile, "title_style"):
+        clean = _strip_title_measurements(clean)
     clean = re.sub(r"\s*[\|/]\s*", ", ", clean)
     clean = re.sub(r"\s+", " ", clean).strip(" ,-")
     return clean if preserve_long_title else _trim_at_word(clean, title_limit)
@@ -1080,6 +1148,14 @@ def _title_has_variation_leakage(title):
         or len(re.findall(r"\bcolor\s*:", clean, flags=re.IGNORECASE)) > 1
         or re.search(r"\b(size|style|option|variant)\s*:", clean, flags=re.IGNORECASE)
     )
+
+def _title_has_broken_fragments(title, source_text=""):
+    clean = str(title or "")
+    parts = [part.strip() for part in re.split(r"\s*,\s*|\s+:\s+", clean) if part.strip()]
+    if any(_phrase_has_fragment_edges(part, source_text) for part in parts):
+        return True
+    words = [word.lower().strip("-") for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", clean)]
+    return any(word in TITLE_FRAGMENT_STARTERS or word in TITLE_FRAGMENT_ENDINGS for word in words)
 
 def _title_case_phrase(phrase):
     phrase = re.sub(r"\s+", " ", str(phrase or "")).strip(" ,-")
@@ -1099,7 +1175,7 @@ def _is_keyword_stuffed_title(title):
         or repeated_words > 2
     )
 
-def _phrase_is_useful_title_chunk(phrase, existing_chunks):
+def _phrase_is_useful_title_chunk(phrase, existing_chunks, source_text=""):
     clean = re.sub(r"\s+", " ", str(phrase or "")).strip(" ,-")
     if not clean or _title_word_count(clean) > 5:
         return False
@@ -1107,17 +1183,44 @@ def _phrase_is_useful_title_chunk(phrase, existing_chunks):
     existing_text = " ".join(existing_chunks).lower()
     if clean_lower in existing_text:
         return False
+    if _phrase_has_fragment_edges(clean, source_text):
+        return False
     useful_words = [word for word in re.findall(r"[A-Za-z0-9]+", clean_lower) if word not in STOP_WORDS]
     if not useful_words:
         return False
     return True
 
+def _clean_strategy_title_candidate(title, source_text=""):
+    clean = _strip_subjective_title_terms(_clean_listing_title(title))
+    clean = re.sub(r"\s+", " ", clean).strip(" ,-")
+    if not clean:
+        return ""
+    if _title_has_variation_leakage(clean) or _is_keyword_stuffed_title(clean):
+        return ""
+    if _phrase_has_fragment_edges(clean, source_text):
+        return ""
+    if _title_word_count(clean) < 4:
+        return ""
+    return clean
+
 def _compose_marketplace_title(original_title, description, seo_strategy):
     profile = get_copywriting_profile()
     strategy = _coerce_seo_strategy(seo_strategy, original_title, description)
+    source_text = " ".join([
+        str(original_title or ""),
+        str(description or ""),
+        str(strategy.get("title") or ""),
+    ])
+    strategy_title = _clean_strategy_title_candidate(strategy.get("title") or "", source_text)
+    if strategy_title:
+        return strategy_title if risk_override_enabled(profile, "etsy_title_limit") else _trim_at_word(strategy_title, effective_limit(profile, "etsy_title_limit"))
+
     noun = strategy.get("primary_product_noun") or _guess_primary_product_noun(original_title, description)
     noun = _strip_subjective_title_terms(_strip_prohibited_terms(noun))
+    noun = _strip_title_measurements(noun)
     noun = re.sub(r"\s+", " ", noun).strip(" ,-") or "Product"
+    if _phrase_has_fragment_edges(noun, source_text):
+        noun = _guess_primary_product_noun(original_title, description)
 
     candidate_chunks = _dedupe_preserve_order(
         _as_list(strategy.get("top_traits"))
@@ -1129,8 +1232,8 @@ def _compose_marketplace_title(original_title, description, seo_strategy):
     chunks = []
     primary_trait = ""
     for candidate in candidate_chunks:
-        candidate = _strip_subjective_title_terms(_strip_prohibited_terms(candidate))
-        if _phrase_is_useful_title_chunk(candidate, []) and noun.lower() not in candidate.lower():
+        candidate = _strip_title_measurements(_strip_subjective_title_terms(_strip_prohibited_terms(candidate)))
+        if _phrase_is_useful_title_chunk(candidate, [], source_text) and noun.lower() not in candidate.lower():
             primary_trait = candidate
             break
 
@@ -1138,8 +1241,8 @@ def _compose_marketplace_title(original_title, description, seo_strategy):
     chunks.append(_title_case_phrase(primary))
 
     for candidate in candidate_chunks:
-        candidate = _strip_subjective_title_terms(_strip_prohibited_terms(candidate))
-        if not _phrase_is_useful_title_chunk(candidate, chunks):
+        candidate = _strip_title_measurements(_strip_subjective_title_terms(_strip_prohibited_terms(candidate)))
+        if not _phrase_is_useful_title_chunk(candidate, chunks, source_text):
             continue
         if len(chunks) >= MAX_MARKETPLACE_TITLE_PHRASES:
             break
@@ -1157,13 +1260,16 @@ def _clean_marketplace_title(title, description, seo_strategy):
         clean = _clean_listing_title(title)
         return clean if risk_override_enabled(profile, "etsy_title_limit") else _trim_at_word(clean, title_limit)
     clean = _strip_subjective_title_terms(_clean_listing_title(title))
+    strategy = _coerce_seo_strategy(seo_strategy, title, description)
+    source_text = " ".join([str(title or ""), str(description or ""), str(strategy.get("title") or "")])
     if (
         not clean
         or _is_keyword_stuffed_title(clean)
         or _title_has_variation_leakage(clean)
+        or _title_has_broken_fragments(clean, source_text)
         or len(clean) < MIN_MARKETPLACE_TITLE_CHARS
     ):
-        rebuilt = _compose_marketplace_title(clean or title, description, seo_strategy)
+        rebuilt = _compose_marketplace_title(clean or title, description, strategy)
         if rebuilt:
             clean = rebuilt
     return clean if risk_override_enabled(profile, "etsy_title_limit") else _trim_at_word(clean, title_limit)
@@ -1344,6 +1450,9 @@ def score_listing_seo(listing_data, source_context=""):
     if _title_has_variation_leakage(title) and not risk_override_enabled(profile, "title_style"):
         score -= 20
         notes.append("Etsy title appears to contain raw variation labels such as Color/Size.")
+    if _title_has_broken_fragments(title) and not risk_override_enabled(profile, "title_style"):
+        score -= 20
+        notes.append("Etsy title contains broken word fragments from supplier text.")
     if "|" in title and not risk_override_enabled(profile, "title_style"):
         score -= 6
         notes.append("Etsy title still uses pipe-separated keyword formatting.")
@@ -1440,8 +1549,9 @@ def build_listing_repair_instructions(listing_data, source_context=""):
     if (
         _title_has_variation_leakage(title)
         or re.search(r"\{[^}]+['\"]?(trait|value)['\"]?[^}]*\}", title_lower)
+        or _title_has_broken_fragments(title)
     ) and not risk_override_enabled(profile, "title_style"):
-        repairs.append("Remove raw variation labels and dict-shaped text from the title, including Color:, Size:, trait, and value fragments.")
+        repairs.append("Remove raw variation labels, dict-shaped text, and broken supplier word fragments from the title.")
     if _is_keyword_stuffed_title(title) and not risk_override_enabled(profile, "title_style"):
         repairs.append("Rewrite the title so it is not a keyword list; keep the product noun first and use natural phrasing.")
     if any(term in title_lower for term in SUBJECTIVE_TITLE_TERMS) and not risk_override_enabled(profile, "promotional_language"):

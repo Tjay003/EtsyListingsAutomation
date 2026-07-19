@@ -91,6 +91,26 @@
     text-transform: uppercase;
 }
 
+.queue-source-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 3px 7px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--primary);
+    font-size: 10px;
+    font-weight: 800;
+    text-decoration: none;
+    text-transform: uppercase;
+}
+
+.queue-source-pill:hover {
+    background: var(--primary);
+    color: #fff;
+}
+
 .queue-reference-panel {
     display: none;
     border-top: 1.5px solid var(--border-color);
@@ -124,7 +144,8 @@
     justify-content: flex-end;
 }
 
-.queue-actions button {
+.queue-actions button,
+.queue-actions .source-action-link {
     padding: 6px 12px !important;
     font-size: 12px !important;
 }
@@ -212,6 +233,7 @@
 .preview-action-row {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
     margin-bottom: 14px;
 }
 

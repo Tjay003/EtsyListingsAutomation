@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const workspace = document.getElementById("listing-workspace");
     const btnTweakCopy = document.getElementById("btn-tweak-copy");
     const btnSave = document.getElementById("btn-save");
+    const workspaceSourceLink = document.getElementById("workspace-source-link");
 
     const etsyTitle = document.getElementById("etsy-title");
     const etsyCategory = document.getElementById("etsy-category");
@@ -526,6 +527,7 @@ document.addEventListener("DOMContentLoaded", () => {
         etsyPrice.value = "";
         etsyDesc.value = "";
         renderEtsyCompatibility(null);
+        updateWorkspaceSourceLink(null);
         tagsContainer.innerHTML = "";
         imagesGrid.innerHTML = `<div class="image-placeholder">Run pipeline to generate images.</div>`;
         variationsSpecsWrapper.style.display = "none";
@@ -1871,6 +1873,10 @@ document.addEventListener("DOMContentLoaded", () => {
             if (getPrimaryReferencePath(item)) {
                 addQueueReferenceBadge(meta);
             }
+            const metaSourceLink = buildSourceLink(item, "queue-source-pill", "Source");
+            if (metaSourceLink) {
+                meta.appendChild(metaSourceLink);
+            }
 
             info.appendChild(title);
             info.appendChild(meta);
@@ -1878,6 +1884,7 @@ document.addEventListener("DOMContentLoaded", () => {
             // Actions
             const actions = document.createElement("div");
             actions.className = "queue-actions";
+            const btnSource = buildSourceLink(item, "secondary-btn source-action-link", "Open Source");
             const referencePanel = buildQueueReferencePanel(item, (updatedItem) => {
                 item.primary_reference_image = updatedItem.primary_reference_image;
                 addQueueReferenceBadge(meta);
@@ -1911,6 +1918,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 actions.appendChild(btnView);
                 actions.appendChild(btnReference);
+                if (btnSource) actions.appendChild(btnSource);
 
                 // Also allow opening in workspace
                 const btnOpen = document.createElement("button");
@@ -1949,6 +1957,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnDelete.disabled = status === "downloading";
 
                 actions.appendChild(btnReference);
+                if (btnSource) actions.appendChild(btnSource);
                 actions.appendChild(btnOpen);
                 actions.appendChild(btnDelete);
 
@@ -2010,6 +2019,48 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!bustCache) return imageUrl;
         const separator = imageUrl.includes("?") ? "&" : "?";
         return `${imageUrl}${separator}t=${Date.now()}`;
+    }
+
+    function getSourceUrl(item) {
+        const value = typeof item?.source_url === "string" ? item.source_url.trim() : "";
+        if (!value) return "";
+        try {
+            const parsed = new URL(value);
+            const host = parsed.hostname.toLowerCase();
+            if (host.endsWith("aliexpress.com") || host.endsWith("aliexpress.us")) {
+                return parsed.href;
+            }
+        } catch (e) {}
+        return "";
+    }
+
+    function buildSourceLink(item, className = "source-action-link", label = "Open Source") {
+        const sourceUrl = getSourceUrl(item);
+        if (!sourceUrl) return null;
+
+        const link = document.createElement("a");
+        link.className = className;
+        link.href = sourceUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = label;
+        const productId = item?.source_product_id ? ` ${item.source_product_id}` : "";
+        link.title = `Open source product${productId}`;
+        link.addEventListener("click", event => event.stopPropagation());
+        return link;
+    }
+
+    function updateWorkspaceSourceLink(item) {
+        if (!workspaceSourceLink) return;
+        const sourceUrl = getSourceUrl(item);
+        if (!sourceUrl) {
+            workspaceSourceLink.hidden = true;
+            workspaceSourceLink.removeAttribute("href");
+            return;
+        }
+        workspaceSourceLink.hidden = false;
+        workspaceSourceLink.href = sourceUrl;
+        workspaceSourceLink.title = `Open source product${item?.source_product_id ? ` ${item.source_product_id}` : ""}`;
     }
 
     function getImagePath(imageEntry) {
@@ -2540,6 +2591,12 @@ document.addEventListener("DOMContentLoaded", () => {
             item
         );
 
+        const previewActionRow = panel.querySelector(".preview-action-row");
+        const previewSourceLink = buildSourceLink(item, "secondary-btn preview-source-btn source-action-link", "Open Source");
+        if (previewActionRow && previewSourceLink) {
+            previewActionRow.insertBefore(previewSourceLink, previewActionRow.firstChild);
+        }
+
         const tweakBtn = panel.querySelector("[data-action='tweak-copy']");
         if (tweakBtn) {
             tweakBtn.addEventListener("click", (event) => {
@@ -2812,6 +2869,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wsProductSlug.value = item.slug;
         btnGenerate.disabled = false;
         renderReferencePicker(item);
+        updateWorkspaceSourceLink(item);
 
         // Switch tab to Workspace
         navBtns[1].click();
@@ -3012,6 +3070,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         renderTags(activeListing.tags || []);
         renderEtsyCompatibility(activeListing);
+        updateWorkspaceSourceLink(selectedQueueItem);
     }
 
     function populateVariationSpecs(item) {

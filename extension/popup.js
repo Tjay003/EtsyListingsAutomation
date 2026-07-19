@@ -5,6 +5,32 @@ function getProductIdFromUrl(url) {
   return match ? match[1] : null;
 }
 
+function cleanProductSourceUrl(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const isAliExpress = host.endsWith("aliexpress.com") || host.endsWith("aliexpress.us");
+    if (!isAliExpress) return "";
+
+    const productId = getProductIdFromUrl(url);
+    if (productId) {
+      return `${parsed.protocol}//${parsed.host}/item/${productId}.html`;
+    }
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch (e) {
+    return "";
+  }
+}
+
+function getSourceDomain(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch (e) {
+    return "";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   // Tabs navigation elements
   const tabBtnGen = document.getElementById("tab-btn-generator");
@@ -266,6 +292,9 @@ document.addEventListener("DOMContentLoaded", async () => {
           price: chkText.checked ? scrapedData.price : "",
           specs: chkText.checked ? scrapedData.specs : {},
           description_text: chkText.checked ? scrapedData.description_text : "",
+          source_url: cleanProductSourceUrl(activeTab.url),
+          source_product_id: getProductIdFromUrl(activeTab.url) || "",
+          source_domain: getSourceDomain(activeTab.url),
           main_images: chkMain.checked ? scrapedData.main_images : [],
           variation_images: chkVariation.checked ? scrapedData.variation_images : [],
           description_images: chkDescription.checked ? finalDescImages : []

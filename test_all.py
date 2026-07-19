@@ -215,6 +215,58 @@ class TestEtsyAutomationLogic(unittest.TestCase):
         self.assertNotIn("pinterest_title", result)
         self.assertNotIn("White Bag Women Bag Summer Bag", result["title"])
 
+    def test_final_listing_qa_prefers_clean_strategy_title_over_chopped_keyword_fragments(self):
+        listing = {
+            "title": "Ng Room Furniture Sofa Si Nordic Coffee, Nordic Coffee Tables Livi, De Table Acrylic Double-d",
+            "description": "A clear acrylic side table with a double-deck storage shelf for living room or bedside use.",
+            "tags": ["side table", "acrylic table", "accent table"],
+            "suggested_price": "$89.99",
+            "category": "Home & Living > Furniture",
+        }
+        strategy = {
+            "title": "Modern Acrylic Side Table with Storage Shelf 16 Inch Cube Accent Table",
+            "primary_product_noun": "nordic coffee",
+            "top_traits": [
+                "Nordic Coffee Tables Livi",
+                "ng Room Furniture Sofa Si",
+                "de Table Acrylic Double-d",
+                "eck Storage Tea Tables Tr",
+            ],
+            "buyer_intents": ["living room furniture"],
+            "primary_keywords": ["nordic coffee", "Nordic Coffee Tables Livi", "de Table Acrylic Double-d"],
+            "long_tail_keywords": ["Modern Acrylic Side Table", "with Storage Shelf in Cle"],
+            "tag_keywords": ["side table", "acrylic table", "accent table"],
+        }
+
+        result = finalize_listing_seo(listing, strategy, MagicMock())
+
+        self.assertEqual(result["title"], "Modern Acrylic Side Table with Storage Shelf Cube Accent Table")
+        for fragment in ["Ng Room", "Livi", "Double-d", "16 Inch"]:
+            self.assertNotIn(fragment, result["title"])
+
+    def test_final_listing_qa_removes_exact_measurements_from_titles(self):
+        listing = {
+            "title": "Modern Round Side Table with Terrazzo Base and Metal Top in Red or Black, 21 Inches High",
+            "description": "A modern round side table with a terrazzo-style base and metal top.",
+            "tags": ["round side table", "accent table", "metal table"],
+            "suggested_price": "$74.99",
+            "category": "Home & Living > Furniture",
+        }
+        strategy = {
+            "title": listing["title"],
+            "primary_product_noun": "side table",
+            "top_traits": ["modern round", "terrazzo base", "metal top"],
+            "buyer_intents": ["living room"],
+            "primary_keywords": ["side table", "round side table"],
+            "long_tail_keywords": ["modern round side table"],
+            "tag_keywords": ["round side table", "accent table", "metal table"],
+        }
+
+        result = finalize_listing_seo(listing, strategy, MagicMock())
+
+        self.assertEqual(result["title"], "Modern Round Side Table with Terrazzo Base and Metal Top in Red or Black")
+        self.assertNotIn("21 Inches", result["title"])
+
     def test_final_listing_qa_cleans_variation_title_category_and_price(self):
         """Test deterministic final QA catches weak listing fields without another model call."""
         mock_client = MagicMock()
@@ -592,6 +644,37 @@ class TestHostedWorkspaceIsolation(unittest.TestCase):
 
         self.assertEqual(image_a.status_code, 200)
         self.assertEqual(image_b.status_code, 404)
+
+    def test_queue_product_stores_clean_source_url(self):
+        response = self.client.post(
+            "/api/queue-product",
+            headers={"X-User-Token": "source-user"},
+            json={
+                "title": "Source Bag",
+                "price": "$12.00",
+                "specs": {},
+                "description_text": "",
+                "source_url": "https://www.aliexpress.com/item/1234567890.html?spm=tracking&gatewayAdapt=abc#nav-review",
+                "source_product_id": "",
+                "source_domain": "www.aliexpress.com",
+                "main_images": [],
+                "variation_images": [],
+                "description_images": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        meta_path = os.path.join(
+            self.server.get_output_dir("source-user"),
+            self.server.sanitize_filename("Source Bag"),
+            "metadata.json",
+        )
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        self.assertEqual(metadata["source_url"], "https://www.aliexpress.com/item/1234567890.html")
+        self.assertEqual(metadata["source_product_id"], "1234567890")
+        self.assertEqual(metadata["source_domain"], "www.aliexpress.com")
 
     def test_tweak_listing_missing_product_returns_404(self):
         response = self.client.post(

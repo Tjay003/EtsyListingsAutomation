@@ -108,6 +108,18 @@
     box-shadow: 2px 2px 0px var(--primary);
 }
 
+a.secondary-btn {
+    text-decoration: none;
+}
+
+.source-action-link {
+    white-space: nowrap;
+}
+
+.source-action-link[hidden] {
+    display: none;
+}
+
 .secondary-btn:hover:not(:disabled) {
     transform: translate(-1px, -1px);
     box-shadow: 3px 3px 0px var(--primary);

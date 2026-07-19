@@ -153,6 +153,29 @@ def build_product_image_url(slug: str, image_path: str, user_token: str) -> str:
     token_part = urllib.parse.quote(sanitize_user_token(user_token), safe="")
     return f"/api/product-image/{slug_part}/{image_part}?token={token_part}"
 
+def clean_product_source_url(source_url: str | None) -> str:
+    raw_url = str(source_url or "").strip()
+    if not raw_url:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(raw_url)
+        if not parsed.scheme:
+            parsed = urllib.parse.urlparse(f"https://{raw_url}")
+        host = parsed.netloc.lower()
+        if not (host.endswith("aliexpress.com") or host.endswith("aliexpress.us")):
+            return ""
+        product_match = re.search(r"/item/(\d+)\.html", parsed.path, flags=re.IGNORECASE)
+        path = f"/item/{product_match.group(1)}.html" if product_match else parsed.path
+        if not path or path == "/":
+            return ""
+        return urllib.parse.urlunparse((parsed.scheme or "https", parsed.netloc, path, "", "", ""))
+    except Exception:
+        return ""
+
+def extract_product_id_from_source_url(source_url: str | None) -> str:
+    match = re.search(r"/item/(\d+)\.html", str(source_url or ""), flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
 class PipelineCancelled(Exception):
     pass
 
@@ -498,6 +521,9 @@ class QueueProductRequest(BaseModel):
     price: str
     specs: dict
     description_text: str
+    source_url: str = ""
+    source_product_id: str = ""
+    source_domain: str = ""
     main_images: list
     variation_images: list
     description_images: list
@@ -523,6 +549,15 @@ def background_queue_product(req_data: dict, user_token: str = "default"):
         user_token = sanitize_user_token(user_token)
         title = req_data.get("title", "Untitled Product")
         slug = sanitize_filename(title)
+        source_url = clean_product_source_url(req_data.get("source_url", ""))
+        if source_url:
+            source_product_id = re.sub(r"\D", "", str(req_data.get("source_product_id", "")))[:32]
+            if not source_product_id:
+                source_product_id = extract_product_id_from_source_url(source_url)
+            source_domain = urllib.parse.urlparse(source_url).netloc.lower()
+        else:
+            source_product_id = ""
+            source_domain = ""
         
         out_root = get_output_dir(user_token)
         product_dir = os.path.join(out_root, slug)
@@ -551,6 +586,9 @@ def background_queue_product(req_data: dict, user_token: str = "default"):
             "price": req_data.get("price", ""),
             "specs": req_data.get("specs", {}),
             "description_text": req_data.get("description_text", ""),
+            "source_url": source_url,
+            "source_product_id": source_product_id,
+            "source_domain": source_domain,
             "main_images": [],
             "variation_images": [],
             "description_images": [],
